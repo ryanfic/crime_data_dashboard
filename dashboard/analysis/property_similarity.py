@@ -13,8 +13,7 @@ Date: February 2026
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import DBSCAN, AgglomerativeClustering
-from sklearn.metrics import pairwise_distances
+from sklearn.cluster import HDBSCAN # Updated to HDBSCAN
 from typing import List, Tuple, Dict, Optional
 import streamlit as st
 
@@ -134,68 +133,34 @@ def extract_similarity_features(properties_df: pd.DataFrame,
 
 
 # =============================================================================
-# SIMILARITY CALCULATION
+# CLUSTERING & BLOCK CREATION (HDBSCAN - Topological)
 # =============================================================================
 
-def calculate_pairwise_similarity(feature_matrix: np.ndarray,
-                                  metric: str = 'euclidean') -> np.ndarray:
-    """
-    Calculate pairwise similarity between all properties
-    
-    Args:
-        feature_matrix: Normalized feature matrix (n × p)
-        metric: Distance metric ('euclidean', 'manhattan', 'cosine')
-    
-    Returns:
-        Similarity matrix (n × n), where similarity ∈ [0, 1]
-        Higher values = more similar
-    """
-    print(f"\n📐 Calculating pairwise similarity ({metric} distance)...")
-    
-    # Calculate pairwise distances
-    distances = pairwise_distances(feature_matrix, metric=metric)
-    
-    # Convert distances to similarities
-    # similarity = 1 / (1 + distance)
-    # This maps distance ∈ [0, ∞) to similarity ∈ (0, 1]
-    similarity_matrix = 1 / (1 + distances)
-    
-    # Diagonal should be 1 (property is identical to itself)
-    np.fill_diagonal(similarity_matrix, 1.0)
-    
-    print(f"   Similarity range: {similarity_matrix.min():.3f} - {similarity_matrix.max():.3f}")
-    print(f"   Mean similarity: {similarity_matrix.mean():.3f}")
-    
-    return similarity_matrix
-
-
-# =============================================================================
-# CLUSTERING & BLOCK CREATION
-# =============================================================================
-
-@st.cache_data(show_spinner="Computing similarity blocks...")
+@st.cache_data(show_spinner="Computing topological similarity zones...")
 def create_similarity_blocks(_properties_df: pd.DataFrame,
                             selected_variables: List[str],
                             similarity_threshold: float,
                             min_cluster_size: int = 10) -> Tuple[pd.DataFrame, Dict]:
     """
-    Create similarity-based blocks by clustering similar properties
+    Create similarity-based blocks using HDBSCAN (Hierarchical Density-Based Spatial Clustering).
+    This uses topological persistence to find stable clusters.
     
     Args:
-        _properties_df: DataFrame with property data (underscore to prevent caching issues)
+        _properties_df: DataFrame with property data
         selected_variables: Variables to use for similarity
-        similarity_threshold: Minimum similarity (0-1) for grouping
-        min_cluster_size: Minimum properties per block
+        similarity_threshold: Controls how strict the clustering is (maps to cluster_selection_epsilon)
+                              Higher threshold = Stricter = Smaller epsilon = More fragmented zones
+        min_cluster_size: Minimum properties to form a zone
     
     Returns:
         Tuple of (properties_with_blocks, block_stats)
-        - properties_with_blocks: Original df with 'block_id' and 'similarity_group' added
-        - block_stats: Dictionary with block-level statistics
     """
+    from sklearn.cluster import HDBSCAN
+    
     properties_df = _properties_df.copy()
     
     print("\n" + "="*70)
-    print("🏘️  CREATING SIMILARITY-BASED BLOCKS")
+    print("🏘️  CREATING TOPOLOGICAL ZONES (HDBSCAN)")
     print("="*70)
     
     # Extract features
@@ -207,83 +172,133 @@ def create_similarity_blocks(_properties_df: pd.DataFrame,
         print("❌ Cannot create blocks - no valid properties")
         return properties_df, {}
     
-    # Calculate similarity
-    similarity_matrix = calculate_pairwise_similarity(feature_matrix)
+    # Map Similarity Threshold (0.1 - 0.9) to Epsilon
+    # Similarity 0.9 (High) -> Epsilon 0.1 (Small distance allowed)
+    # Similarity 0.1 (Low)  -> Epsilon 1.0+ (Large distance allowed)
+    # Formula: epsilon = (1 - similarity) * Scale Factor
+    # We use a scale factor because normalized features have variance ~1
     
-    # Convert similarity threshold to distance threshold
-    # similarity = 1 / (1 + distance)
-    # distance = (1 / similarity) - 1
-    distance_threshold = (1 / similarity_threshold) - 1
+    # Heuristic: For normalized data (std=1), a distance of 0.5 is "very close", 
+    # 2.0 is "far".
+    # If High Similarity (0.9) -> epsilon should be small (e.g. 0.3)
+    # If Low Similarity (0.1) -> epsilon should be large (e.g. 2.0 or None)
     
-    print(f"\n🎯 Clustering with threshold {similarity_threshold:.0%} (distance ≤ {distance_threshold:.2f})")
+    epsilon = (1.0 - similarity_threshold) * 3.0
+    if epsilon < 0.1: epsilon = 0.1 # Minimum epsilon to avoid overfitting
     
-    # Cluster using DBSCAN (density-based spatial clustering)
-    # eps = distance threshold
-    # min_samples = minimum cluster size
-    clusterer = DBSCAN(
-        eps=distance_threshold,
-        min_samples=min_cluster_size,
-        metric='precomputed'
+    print(f"\n🎯 Clustering with HDBSCAN:")
+    print(f"   Similarity: {similarity_threshold:.0%}")
+    print(f"   Epsilon (Max Distance): {epsilon:.3f}")
+    print(f"   Min Cluster Size: {min_cluster_size}")
+    
+    # Run HDBSCAN
+    # metric='euclidean' on normalized features implies that "distance" = "dissimilarity"
+    clusterer = HDBSCAN(
+        min_cluster_size=min_cluster_size,
+        min_samples=None, # Auto (usually equal to min_cluster_size)
+        cluster_selection_epsilon=epsilon,
+        metric='euclidean',
+        store_centers='centroid',
+        n_jobs=-1 # Use all cores
     )
     
-    # Convert similarity to distance for DBSCAN
-    distance_matrix = (1 / similarity_matrix) - 1
-    np.fill_diagonal(distance_matrix, 0.0)
-    
-    # Fit clustering
-    cluster_labels = clusterer.fit_predict(distance_matrix)
+    cluster_labels = clusterer.fit_predict(feature_matrix)
     
     # Add cluster labels to dataframe
     df_features['block_id'] = cluster_labels
     df_features['similarity_group'] = cluster_labels.copy()
     
-    # -1 means noise (unclustered), assign individual block IDs
+    # Add STABILITY score (Probability)
+    # unique to HDBSCAN
+    if hasattr(clusterer, 'probabilities_'):
+        df_features['zone_stability'] = clusterer.probabilities_
+    else:
+        df_features['zone_stability'] = 1.0
+        
+    # -1 means noise (unclustered)
     noise_mask = cluster_labels == -1
     n_noise = noise_mask.sum()
+    
     if n_noise > 0:
         # Assign unique IDs to noise points (starting from max_cluster + 1)
         max_cluster = cluster_labels.max()
+        if max_cluster == -1: max_cluster = 0
+            
         noise_ids = np.arange(max_cluster + 1, max_cluster + 1 + n_noise)
         df_features.loc[noise_mask, 'block_id'] = noise_ids
         df_features.loc[noise_mask, 'similarity_group'] = -1  # Keep -1 for coloring
+        df_features.loc[noise_mask, 'zone_stability'] = 0.0 # Noise has 0 stability
     
     # Count blocks
     n_blocks = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
     
-    print(f"\n✅ Created {n_blocks} similarity blocks")
-    print(f"   Properties in blocks: {(~noise_mask).sum():,}")
-    print(f"   Unclustered properties: {n_noise:,}")
+    print(f"\n✅ Created {n_blocks} topological zones")
+    print(f"   Properties in zones: {(~noise_mask).sum():,}")
+    print(f"   Unclustered (Noise): {n_noise:,}")
     
     # Calculate block statistics
     block_stats = {}
     for block_id in df_features['block_id'].unique():
         if block_id == -1:
-            continue  # Skip noise
+            continue
+            
+        # If it was originally noise but we gave it a unique ID, we still want stats
+        # But 'similarity_group' will be -1 for noise.
+        # Let's map stats by 'block_id' (unique) but group by 'similarity_group' (visual)
         
+        is_noise = df_features.loc[df_features['block_id'] == block_id, 'similarity_group'].iloc[0] == -1
+        if is_noise:
+            # Skip computing full stats for individual noise points to save time?
+            # Or keep them? Let's keep them but mark as noise.
+            pass
+
         block_properties = df_features[df_features['block_id'] == block_id]
+        
+        # Determine dominant characteristics for labeling
+        avg_val = block_properties['property_value'].mean()
+        avg_age = block_properties['building_age'].mean() if 'building_age' in block_properties.columns else 0
+        
+        label = f"Zone {block_id}"
+        if avg_val > 2000000: label += " | High Value"
+        elif avg_val < 800000: label += " | Affordable"
+        else: label += " | Mid Market"
         
         block_stats[block_id] = {
             'n_properties': len(block_properties),
-            'avg_property_value': block_properties['property_value'].mean(),
+            'avg_property_value': avg_val,
             'median_property_value': block_properties['property_value'].median(),
-            'avg_building_age': block_properties['building_age'].mean() if 'building_age' in block_properties.columns else None,
+            'avg_building_age': avg_age,
             'primary_type': block_properties['property_type'].mode()[0] if 'property_type' in block_properties.columns else None,
-            # Convex hull for spatial representation
-            'properties_coords': block_properties[['latitude', 'longitude']].dropna().values.tolist()
+            'stability': block_properties['zone_stability'].mean(),
+            'is_noise': is_noise,
+            'label': label,
+            'properties_coords': block_properties[['latitude', 'longitude']].dropna().values.tolist(),
+            # Convert Shapely Polygon to list of [lat, lon] for Folium
         }
+        
+        # Calculate convex hull
+        hull = create_convex_hull(block_properties[['latitude', 'longitude']].dropna().values.tolist())
+        if hull:
+            # Extract coords (lon, lat) from Shapely and convert to (lat, lon) for Folium
+            # Shapely stores (x, y) = (lon, lat)
+            hull_coords = [[lat, lon] for lon, lat in hull.exterior.coords]
+            block_stats[block_id]['convex_hull'] = hull_coords
+        else:
+            block_stats[block_id]['convex_hull'] = None
     
     # Merge back with original dataframe
     result_df = properties_df.merge(
-        df_features[['PID', 'block_id', 'similarity_group']],
+        df_features[['PID', 'block_id', 'similarity_group', 'zone_stability']],
         on='PID',
         how='left'
     )
     
-    print(f"\n📊 Block size distribution:")
-    block_sizes = df_features[df_features['block_id'] != -1].groupby('block_id').size()
-    print(f"   Min: {block_sizes.min()} properties")
-    print(f"   Median: {block_sizes.median():.0f} properties")
-    print(f"   Max: {block_sizes.max()} properties")
+    print(f"\n📊 Zone size distribution:")
+    block_sizes = df_features[df_features['similarity_group'] != -1].groupby('similarity_group').size()
+    if not block_sizes.empty:
+        print(f"   Min: {block_sizes.min()} properties")
+        print(f"   Median: {block_sizes.median():.0f} properties")
+        print(f"   Max: {block_sizes.max()} properties")
     print("="*70 + "\n")
     
     return result_df, block_stats

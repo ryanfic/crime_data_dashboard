@@ -11,6 +11,7 @@ Date: February 2026
 import pandas as pd
 import streamlit as st
 import json
+import os
 from typing import Tuple, Optional
 import numpy as np
 
@@ -33,114 +34,64 @@ from utils.geo_utils import (
 @st.cache_data(show_spinner="Loading property data...")
 def load_property_data() -> pd.DataFrame:
     """
-    Load and preprocess property tax report data
+    Load and preprocess property tax report data with REAL coordinates
     
     This is the PRIMARY dataset for the similarity-based block analysis.
     
     Returns:
         DataFrame with columns:
-            - PID, FOLIO
-            - LAND_COORDINATE (for geocoding)
-            - FROM_CIVIC_NUMBER, STREET_NAME
+            - PID, FROM_CIVIC_NUMBER, STREET_NAME, PROPERTY_POSTAL_CODE
             - CURRENT_LAND_VALUE, CURRENT_IMPROVEMENT_VALUE
-            - YEAR_BUILT
-            - ZONING_DISTRICT, ZONING_CLASSIFICATION
-            - TAX_ASSESSMENT_YEAR, CURRENT_LAND_VALUE
-            - latitude, longitude (added)
-            - property_value (total value, added)
-            - building_age (added)
+            - YEAR_BUILT, ZONING_DISTRICT, ZONING_CLASSIFICATION, LEGAL_TYPE
+            - latitude, longitude (REAL coordinates from geocoding)
+            - property_value (total value, calculated)
+            - building_age (calculated)
+            - property_type (categorized)
     """
-    print("📊 Loading property tax data...")
+    print("📊 Loading geocoded property data...")
     
-    # Load data (delimiter is semicolon based on sample)
-    df = pd.read_csv(PROPERTY_TAX_FILE, delimiter=';', encoding='utf-8-sig',
-                     low_memory=False)
+    # Use absolute path based on this file's location
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    geocoded_file = os.path.join(current_dir, "geocoded_properties.csv")
+    script_path = os.path.join(current_dir, "geocode_properties.py")
     
-    print(f"   Loaded {len(df):,} properties")
-    
-    #Select relevant columns
-    columns_to_keep = [
-        'PID', 'FOLIO', 'LAND_COORDINATE',
-        'ZONING_DISTRICT', 'ZONING_CLASSIFICATION',
-        'FROM_CIVIC_NUMBER', 'STREET_NAME',
-        'PROPERTY_POSTAL_CODE',
-        'CURRENT_LAND_VALUE', 'CURRENT_IMPROVEMENT_VALUE',
-        'YEAR_BUILT', 'TAX_ASSESSMENT_YEAR',
-        'LEGAL_TYPE', 'NARRATIVE_LEGAL_LINE1'
-    ]
-    
-    # Keep only columns that exist
-    existing_cols = [col for col in columns_to_keep if col in df.columns]
-    df = df[existing_cols].copy()
-    
-    # Convert numeric columns
-    numeric_cols = ['CURRENT_LAND_VALUE', 'CURRENT_IMPROVEMENT_VALUE', 'YEAR_BUILT']
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-    
-    # Calculate total property value
-    df['property_value'] = (
-        df['CURRENT_LAND_VALUE'].fillna(0) + 
-        df['CURRENT_IMPROVEMENT_VALUE'].fillna(0)
-    )
-    
-    # Filter out invalid values
-    df = df[df['property_value'] > 0]
-    df = df[df['property_value'] < MAX_PROPERTY_VALUE]
-    
-    # Calculate building age
-    current_year = pd.Timestamp.now().year
-    df['building_age'] = current_year - df['YEAR_BUILT']
-    df['building_age'] = df['building_age'].clip(lower=0, upper=200)
-    
-    # Geocode addresses to get coordinates
-    # Since we have 1.5M properties, we'll use a sample for the prototype
-    # and cache results
-    print("   Geocoding property addresses (using sample for performance)...")
-    
-    df['latitude'] = np.nan
-    df['longitude'] = np.nan
-    df['full_address'] = ''
-    
-    # Create full addresses from civic number + street name
-    if 'FROM_CIVIC_NUMBER' in df.columns and 'STREET_NAME' in df.columns:
-        df['full_address'] = (
-            df['FROM_CIVIC_NUMBER'].astype(str) + ' ' + 
-            df['STREET_NAME'].fillna('') + ', Vancouver, BC'
+    try:
+        df = pd.read_csv(geocoded_file)
+        print(f"   ✅ Loaded {len(df):,} geocoded properties")
+    except FileNotFoundError:
+        print(f"   ⚠️ Geocoded file not found at {geocoded_file}")
+        print("   Running geocoding script...")
+        
+        # Run the geocoding script
+        import subprocess
+        result = subprocess.run(
+            ["python3", script_path],
+            capture_output=True,
+            text=True
         )
         
-        # For prototype: Use simplified approach with Vancouver's street grid
-        # Properties are distributed across the city, we can estimate coords from address patterns
-        # This is a placeholder - ideally we'd use actual geocoding API
-        
-        # Simple geocoding for demonstration (using Nominatim would be better but slow)
-        # For now, we'll use a hash-based distribution to simulate geocoded properties
-        # This allows testing the property similarity algorithm
-        
-        # Sample properties for geocoding (to make dashboard work)
-        sample_size = min(5000, len(df))
-        sample_indices = df.sample(n=sample_size, random_state=42).index
-        
-        # Use simple grid approximation for Vancouver
-        # Vancouver roughly spans: lat 49.2-49.3, lon -123.25 to -123.00
-        np.random.seed(42)
-        for idx in sample_indices:
-            # Distribute properties across Vancouver bounds
-            df.loc[idx, 'latitude'] = 49.20 + np.random.random() * 0.10  # 49.20 to 49.30
-            df.loc[idx, 'longitude'] = -123.25 + np.random.random() * 0.25  # -123.25 to -123.00
+        if result.returncode == 0:
+            print("   ✅ Geocoding complete, loading data...")
+            df = pd.read_csv(geocoded_file)
+        else:
+            print(f"   ❌ Geocoding failed: {result.stderr}")
+            # Fallback to empty dataframe with correct columns
+            df = pd.DataFrame(columns=[
+                'PID', 'FROM_CIVIC_NUMBER', 'STREET_NAME', 'PROPERTY_POSTAL_CODE',
+                'CURRENT_LAND_VALUE', 'CURRENT_IMPROVEMENT_VALUE',
+                'YEAR_BUILT', 'ZONING_DISTRICT', 'ZONING_CLASSIFICATION', 'LEGAL_TYPE',
+                'latitude', 'longitude', 'property_value', 'building_age', 'property_type'
+            ])
+            return df
     
-    # Property type categorization
-    df['property_type'] = 'Unknown'
-    if 'ZONING_CLASSIFICATION' in df.columns:
-        df.loc[df['ZONING_CLASSIFICATION'].str.contains('Residential', na=False, case=False), 'property_type'] = 'Residential'
-        df.loc[df['ZONING_CLASSIFICATION'].str.contains('Commercial', na=False, case=False), 'property_type'] = 'Commercial'
-        df.loc[df['ZONING_CLASSIFICATION'].str.contains('Industrial', na=False, case=False), 'property_type'] = 'Industrial'
-        df.loc[df['ZONING_CLASSIFICATION'].str.contains('Mixed', na=False, case=False), 'property_type'] = 'Mixed'
+    # Data is already preprocessed from geocoding script
+    # Just validate and return
     
-    print(f"   Processed {len(df):,} valid properties")
     print(f"   Properties with coordinates: {df['latitude'].notna().sum():,}")
     print(f"   Property value range: ${df['property_value'].min():,.0f} - ${df['property_value'].max():,.0f}")
+    print(f"   Latitude range: {df['latitude'].min():.4f} - {df['latitude'].max():.4f}")
+    print(f"   Longitude range: {df['longitude'].min():.4f} - {df['longitude'].max():.4f}")
+    print(f"   Property types: {df['property_type'].value_counts().to_dict()}")
     
     return df
 
@@ -223,21 +174,25 @@ def load_transit_stations() -> pd.DataFrame:
     """
     print("🚇 Loading transit stations...")
     
-    df = pd.read_csv(TRANSIT_STATIONS_FILE, delimiter=';')
-    
-    # Parse GeoJSON from Geom column
-    df['geojson'] = df['Geom'].apply(parse_geojson_from_string)
-    
-    # Extract coordinates
-    coords = df['geojson'].apply(extract_coordinates_from_geojson)
-    df[['latitude', 'longitude']] = pd.DataFrame(coords.tolist(), index=df.index)
-    
-    # Remove rows without valid coordinates
-    df = df.dropna(subset=['latitude', 'longitude'])
-    
-    print(f"   Loaded {len(df)} transit stations")
-    
-    return df
+    try:
+        df = pd.read_csv(TRANSIT_STATIONS_FILE, delimiter=';')
+        
+        # Parse GeoJSON from Geom column
+        df['geojson'] = df['Geom'].apply(parse_geojson_from_string)
+        
+        # Extract coordinates
+        coords = df['geojson'].apply(extract_coordinates_from_geojson)
+        df[['latitude', 'longitude']] = pd.DataFrame(coords.tolist(), index=df.index)
+        
+        # Remove rows without valid coordinates
+        df = df.dropna(subset=['latitude', 'longitude'])
+        
+        print(f"   Loaded {len(df)} transit stations")
+        return df
+        
+    except Exception as e:
+        print(f"   ❌ Error loading transit: {e}")
+        return pd.DataFrame(columns=['STATION', 'latitude', 'longitude'])
 
 
 # =============================================================================
@@ -254,26 +209,30 @@ def load_street_lights() -> pd.DataFrame:
     """
     print("💡 Loading street lights...")
     
-    df = pd.read_csv(STREET_LIGHTS_FILE, delimiter=';')
-    
-    # Parse GeoJSON from Geom column
-    df['geojson'] = df['Geom'].apply(parse_geojson_from_string)
-    
-    # Extract coordinates
-    coords = df['geojson'].apply(extract_coordinates_from_geojson)
-    df[['latitude', 'longitude']] = pd.DataFrame(coords.tolist(), index=df.index)
-    
-    # Remove rows without valid coordinates
-    df = df.dropna(subset=['latitude', 'longitude'])
-    
-    # Sample if too many (for performance)
-    if len(df) > 20000:
-        print(f"   Sampling 20,000 from {len(df):,} street lights for performance")
-        df = df.sample(n=20000, random_state=42)
-    
-    print(f"   Loaded {len(df):,} street lights")
-    
-    return df
+    try:
+        df = pd.read_csv(STREET_LIGHTS_FILE, delimiter=';')
+        
+        # Parse GeoJSON from Geom column
+        df['geojson'] = df['Geom'].apply(parse_geojson_from_string)
+        
+        # Extract coordinates
+        coords = df['geojson'].apply(extract_coordinates_from_geojson)
+        df[['latitude', 'longitude']] = pd.DataFrame(coords.tolist(), index=df.index)
+        
+        # Remove rows without valid coordinates
+        df = df.dropna(subset=['latitude', 'longitude'])
+        
+        # Sample if too many (for performance)
+        if len(df) > 20000:
+            print(f"   Sampling 20,000 from {len(df):,} street lights for performance")
+            df = df.sample(n=20000, random_state=42)
+        
+        print(f"   Loaded {len(df):,} street lights")
+        return df
+        
+    except Exception as e:
+        print(f"   ❌ Error loading street lights: {e}")
+        return pd.DataFrame(columns=['latitude', 'longitude'])
 
 
 # =============================================================================
@@ -339,27 +298,36 @@ def load_parks() -> pd.DataFrame:
     """
     print("🌳 Loading parks...")
     
-    df = pd.read_csv(PARKS_FILE, delimiter=';')
-    
-    # Parse coordinates from GoogleMapDest column
-    if 'GoogleMapDest' in df.columns:
-        def parse_google_coords(coord_str):
-            if pd.isna(coord_str):
-                return None, None
-            try:
-                lat, lon = coord_str.split(',')
-                return float(lat.strip()), float(lon.strip())
-            except:
-                return None, None
+    try:
+        df = pd.read_csv(PARKS_FILE, delimiter=';', encoding='utf-8-sig') # Handle BOM
         
-        coords = df['GoogleMapDest'].apply(parse_google_coords)
-        df[['latitude', 'longitude']] = pd.DataFrame(coords.tolist(), index=df.index)
-    
-    df = df.dropna(subset=['latitude', 'longitude'])
-    
-    print(f"   Loaded {len(df)} parks")
-    
-    return df
+        # Parse coordinates from GoogleMapDest column
+        if 'GoogleMapDest' in df.columns:
+            def parse_google_coords(coord_str):
+                if pd.isna(coord_str):
+                    return None, None
+                try:
+                    lat, lon = coord_str.split(',')
+                    return float(lat.strip()), float(lon.strip())
+                except:
+                    return None, None
+            
+            coords = df['GoogleMapDest'].apply(parse_google_coords)
+            df[['latitude', 'longitude']] = pd.DataFrame(coords.tolist(), index=df.index)
+        else:
+            print(f"   ⚠️ GoogleMapDest column not found in parks data (Cols: {list(df.columns)})")
+            # Ensure columns exist anyway
+            df['latitude'] = np.nan
+            df['longitude'] = np.nan
+        
+        df = df.dropna(subset=['latitude', 'longitude'])
+        
+        print(f"   Loaded {len(df)} parks")
+        return df
+        
+    except Exception as e:
+        print(f"   ❌ Error loading parks: {e}")
+        return pd.DataFrame(columns=['Name', 'Hectare', 'latitude', 'longitude'])
 
 
 # =============================================================================

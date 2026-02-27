@@ -1,0 +1,345 @@
+/* Reset & Base Values */
+:root {
+  --bg-dark: #0f172a;
+  --bg-glass: rgba(15, 23, 42, 0.7);
+  --border-glass: rgba(255, 255, 255, 0.1);
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --accent: #3b82f6;
+  --accent-glow: rgba(59, 130, 246, 0.5);
+
+  --card-width: 200px;
+  --sidebar-width: 320px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body.dark-theme {
+  font-family: 'Outfit', sans-serif;
+  background-color: var(--bg-dark);
+  color: var(--text-main);
+  overflow: hidden;
+  /* Hide scrollbars on body */
+}
+
+/* Map Container */
+#map {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1;
+}
+
+/* Glassmorphism Generic Panel */
+.glass-panel {
+  background: var(--bg-glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-glass);
+  border-radius: 16px;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+}
+
+/* Loading Overlay */
+#loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background: var(--bg-dark);
+  transition: opacity 0.5s ease-out, visibility 0.5s ease-out;
+}
+
+#loading-overlay.hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.spinner {
+  width: 50px;
+  height: 50px;
+  border: 4px solid var(--border-glass);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 20px;
+}
+
+@keyframes spin {
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+#loading-text {
+  font-weight: 300;
+  letter-spacing: 1px;
+}
+
+/* Sidebar */
+.sidebar {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  width: var(--sidebar-width);
+  height: calc(100vh - 40px);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-header {
+  padding: 24px;
+  border-bottom: 1px solid var(--border-glass);
+}
+
+.sidebar-header h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+  background: linear-gradient(90deg, #60a5fa, #a78bfa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.sidebar-header p {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.sidebar-content {
+  padding: 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Custom Scrollbar for Sidebar */
+.sidebar-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-content::-webkit-scrollbar-thumb {
+  background: var(--border-glass);
+  border-radius: 10px;
+}
+
+.control-group {
+  margin-bottom: 30px;
+}
+
+.control-group h3 {
+  font-size: 1rem;
+  font-weight: 500;
+  color: #e2e8f0;
+  margin-bottom: 16px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-size: 0.8rem;
+}
+
+/* Toggle Switch */
+.toggle-switch {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  transition: color 0.2s;
+}
+
+.toggle-switch:hover {
+  color: #fff;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 20px;
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  margin-right: 12px;
+  transition: .4s;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background-color: #94a3b8;
+  border-radius: 50%;
+  transition: .4s;
+}
+
+.toggle-switch input:checked+.slider {
+  background-color: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+.toggle-switch input:checked+.slider:before {
+  transform: translateX(20px);
+  background-color: #fff;
+}
+
+/* Range Sliders */
+.property-filters {
+  padding-left: 52px;
+  margin-top: -4px;
+  margin-bottom: 16px;
+  transition: all 0.3s ease;
+  overflow: hidden;
+}
+
+.property-filters.hidden {
+  max-height: 0;
+  opacity: 0;
+  margin-bottom: 0;
+  pointer-events: none;
+}
+
+.range-container {
+  margin-bottom: 12px;
+}
+
+.range-container label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.range-container span {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+input[type=range] {
+  -webkit-appearance: none;
+  width: 100%;
+  background: transparent;
+}
+
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 14px;
+  width: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  margin-top: -5px;
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+input[type=range]::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 4px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+/* Stats Container */
+.stats-container {
+  position: absolute;
+  top: 20px;
+  left: calc(var(--sidebar-width) + 40px);
+  right: 20px;
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  z-index: 1000;
+  pointer-events: none;
+  /* Let clicks pass through to map */
+}
+
+/* Individual Stat Card */
+.stat-card {
+  pointer-events: auto;
+  min-width: 160px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  animation: slideDown 0.4s ease-out;
+}
+
+.stat-card .stat-title {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.stat-card .stat-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+/* Micro-animations */
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Map specific tweaks */
+.leaflet-container {
+  background: transparent;
+  /* Changed from dark so light tiles don't flash dark */
+}
+
+/* Style the Leaflet native layer control to match our theme */
+.leaflet-control-layers {
+  background: var(--bg-glass) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border-glass) !important;
+  border-radius: 8px !important;
+  color: var(--text-main) !important;
+}
+
+.leaflet-control-layers-expanded {
+  padding: 10px !important;
+}
+
+.leaflet-control-layers label {
+  color: var(--text-main);
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.9rem;
+  margin-bottom: 4px;
+}

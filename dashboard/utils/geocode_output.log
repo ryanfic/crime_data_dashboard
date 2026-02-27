@@ -1,0 +1,28 @@
+Loading building footprints from ../../Data /building-footprints-2015.csv...
+Loaded 50,000 building footprints
+Using geo_point_2d column for coordinates...
+
+✅ Successfully extracted 50,000 building coordinates
+
+Loading property tax data from ../../Data /property-tax-report.csv...
+Loaded 200,000 properties
+Valid properties for geocoding: 98,532
+Sampling 50,000 properties to assign coordinates...
+
+Saving geocoded properties to ./geocoded_properties.csv...
+
+✅ Created geocoded property dataset with 50,000 properties
+Latitude range: 49.1999 to 49.2953
+Longitude range: -123.2240 to -123.0237
+
+======================================================================
+PROPERTY DISTRIBUTION BY TYPE
+======================================================================
+property_type
+Unknown        40148
+Commercial      6403
+Residential     2349
+Industrial      1100
+Name: count, dtype: int64
+
+======================================================================

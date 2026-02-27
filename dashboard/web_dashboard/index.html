@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vancouver Analysis Dashboard</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./style.css" />
+</head>
+
+<body class="dark-theme">
+    <div id="app">
+        <!-- Loading Screen -->
+        <div id="loading-overlay" class="glass-panel active">
+            <div class="spinner"></div>
+            <h2 id="loading-text">Loading Data (0/7)...</h2>
+        </div>
+
+        <!-- Fullscreen Map -->
+        <div id="map"></div>
+
+        <!-- Top Stats Container (Dynamic) -->
+        <div id="stats-container" class="stats-container"></div>
+
+        <!-- Left Sidebar -->
+        <aside id="sidebar" class="sidebar glass-panel">
+            <div class="sidebar-header">
+                <h1>Vancouver Data Explorer</h1>
+                <p>Toggle layers to visualize and analyze city data.</p>
+            </div>
+
+            <div class="sidebar-content">
+                <!-- Properties -->
+                <div class="control-group">
+                    <h3>Real Estate Properties</h3>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="layer-properties" class="layer-toggle" data-layer="properties">
+                        <span class="slider round"></span> Show Properties
+                    </label>
+                    <div class="property-filters hidden" id="property-filters">
+                        <div class="range-container">
+                            <label>Max Value: <span id="val-display">$10M</span></label>
+                            <input type="range" id="prop-value" min="0" max="10000000" step="100000" value="10000000">
+                        </div>
+                        <div class="range-container">
+                            <label>Max Age: <span id="age-display">150 yrs</span></label>
+                            <input type="range" id="prop-age" min="0" max="150" value="150">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Crime -->
+                <div class="control-group">
+                    <h3>Crime Incidents (2020)</h3>
+                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle"
+                            data-layer="crime-Break and Enter Residential/Other"> <span class="slider round"></span> B&E
+                        Residential</label>
+                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle"
+                            data-layer="crime-Break and Enter Commercial"> <span class="slider round"></span> B&E
+                        Commercial</label>
+                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle"
+                            data-layer="crime-Theft of Bicycle"> <span class="slider round"></span> Bicycle
+                        Theft</label>
+                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle"
+                            data-layer="crime-Theft from Vehicle"> <span class="slider round"></span> Theft from
+                        Vehicle</label>
+                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle"
+                            data-layer="crime-Mischief"> <span class="slider round"></span> Mischief</label>
+                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle"
+                            data-layer="crime-Offence Against a Person"> <span class="slider round"></span> Offence
+                        Against Person</label>
+                </div>
+
+                <!-- City Infrastructure -->
+                <div class="control-group">
+                    <h3>City Infrastructure</h3>
+                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle"
+                            data-layer="street_network"> <span class="slider round"></span> Street Network</label>
+                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle" data-layer="transit"> <span
+                            class="slider round"></span> Transit Stations</label>
+                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle" data-layer="lights"> <span
+                            class="slider round"></span> Street Lights</label>
+                    <div class="property-filters hidden" id="light-filters">
+                        <div class="range-container">
+                            <label>Illumination Radius: <span id="light-display">30m</span></label>
+                            <input type="range" id="light-radius" min="0" max="60" value="30">
+                        </div>
+                    </div>
+                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle" data-layer="parks"> <span
+                            class="slider round"></span> Parks</label>
+                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle" data-layer="businesses">
+                        <span class="slider round"></span> Businesses</label>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <script type="module" src="./main.js"></script>
+</body>
+
+</html>

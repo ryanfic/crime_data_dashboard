@@ -19,7 +19,7 @@ DATA_DIR = os.path.join(BASE_DIR, "Data ")  # Note: space in folder name
 
 # Data files
 PROPERTY_TAX_FILE = os.path.join(DATA_DIR, "property-tax-report.csv")
-CRIME_FILE = os.path.join(BASE_DIR, "crimedata_csv_AllNeighbourhoods_2020", "crimedata_csv_AllNeighbourhoods_2020.csv")  # ALL neighborhoods
+CRIME_FILE = os.path.join(DATA_DIR, "crimedata_csv_AllNeighbourhoods_2020", "crimedata_csv_AllNeighbourhoods_2020.csv")  # ALL neighborhoods
 TRANSIT_STATIONS_FILE = os.path.join(DATA_DIR, "rapid-transit-stations.csv")
 STREET_LIGHTS_FILE = os.path.join(DATA_DIR, "street-lighting-poles.csv")
 BUSINESS_LICENSES_FILE = os.path.join(DATA_DIR, "business-licences.csv")
@@ -27,6 +27,10 @@ ZONING_FILE = os.path.join(DATA_DIR, "zoning_d.csv")
 PARKS_FILE = os.path.join(DATA_DIR, "parks.csv")
 BUILDING_FOOTPRINTS_FILE = os.path.join(DATA_DIR, "building-footprints-2015.csv")
 TRAFFIC_SIGNALS_FILE = os.path.join(DATA_DIR, "traffic-signals.csv")
+
+print(f"DEBUG: BASE_DIR = {BASE_DIR}")
+print(f"DEBUG: DATA_DIR = {DATA_DIR}")
+print(f"DEBUG: CRIME_FILE = {CRIME_FILE}")
 
 # =============================================================================
 # MAP SETTINGS

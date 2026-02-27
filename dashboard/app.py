@@ -101,84 +101,94 @@ if 'map_initialized' not in st.session_state:
 with st.sidebar:
     st.header("⚙️ Analysis Controls")
     
-    # ===================
-    # Property Similarity Settings
-    # ===================
-    st.subheader("🏘️ Property Similarity Blocks")
-    
-    st.markdown("**Select variables for similarity:**")
-    selected_vars = []
-    for var_key, var_label in SIMILARITY_VARIABLES.items():
-        if st.checkbox(var_label, value=var_key in DEFAULT_SELECTED_VARIABLES, key=f"var_{var_key}"):
-            selected_vars.append(var_key)
-    
-    if len(selected_vars) == 0:
-        st.warning("⚠️ Select at least one variable")
-        selected_vars = DEFAULT_SELECTED_VARIABLES
-    
-    similarity_threshold = st.slider(
-        "Similarity Threshold",
-        min_value=0.1,
-        max_value=0.9,
-        value=DEFAULT_SIMILARITY_THRESHOLD,
-        step=0.1,
-        format="%.0f%%",
-        help="Minimum similarity (%) for grouping properties"
-    )
-    
-    min_cluster_size = st.select_slider(
-        "Min Properties per Block",
-        options=[5, 10, 20, 30, 50],
-        value=DEFAULT_MIN_CLUSTER_SIZE,
-        help="Minimum number of properties to form a block"
-    )
-    
-    st.divider()
-    
-    # ===================
-    # Layer Toggles
-    # ===================
-    st.subheader("📍 Map Layers")
-    st.markdown("*Check multiple to stack*")
-    
-    show_crime = st.checkbox("Crime Points", value=True)
-    show_transit = st.checkbox("Transit Stations", value=True)
-    show_lighting = st.checkbox("Street Lighting", value=False)
-    show_parks = st.checkbox("Parks", value=False)
-    
-    st.divider()
-    
-    # ===================
-    # Map Style
-    # ===================
-    st.subheader("🎨 Map Style")
-    
-    use_dark_mode = st.checkbox(
-        "Dark Mode (Better for Lighting)",
-        value=False,
-        help="Dark map shows street lighting coverage more clearly"
-    )
-    
-    st.divider()
-    
-    # ===================
-    # Performance Settings
-    # ===================
-    st.subheader("⚡ Performance")
-    
-    crime_sample_size = st.select_slider(
-        "Crime Points to Display",
-        options=[1000, 5000, 10000, 20000, "All"],
-        value=10000,
-        help="Reduce for faster map loading"
-    )
-    
-    st.divider()
-    
-    # ===================
-    # Crime Filters
-    # ===================
-    if show_crime:
+    with st.form("analysis_controls"):
+        # ===================
+        # Property Similarity Settings
+        # ===================
+        st.subheader("🏘️ Property Similarity Blocks")
+        
+        st.markdown("**Select variables for similarity:**")
+        selected_vars = []
+        for var_key, var_label in SIMILARITY_VARIABLES.items():
+            if st.checkbox(var_label, value=var_key in DEFAULT_SELECTED_VARIABLES, key=f"var_{var_key}"):
+                selected_vars.append(var_key)
+        
+        if len(selected_vars) == 0:
+            st.warning("⚠️ Select at least one variable")
+            selected_vars = DEFAULT_SELECTED_VARIABLES
+        
+        similarity_threshold = st.slider(
+            "Cluster Similarity Strictness",
+            min_value=0.1,
+            max_value=0.9,
+            value=DEFAULT_SIMILARITY_THRESHOLD,
+            step=0.1,
+            format="%.0f%%",
+            help="Higher = Stricter similarity (zones must be very uniform). Lower = looser (zones can vary more)."
+        )
+        
+        min_cluster_size = st.select_slider(
+            "Min Properties per Block",
+            options=[5, 10, 20, 30, 50],
+            value=DEFAULT_MIN_CLUSTER_SIZE,
+            help="Minimum number of properties to form a block"
+        )
+        
+        st.divider()
+        
+        # ===================
+        # Layer Toggles
+        # ===================
+        st.subheader("📍 Map Layers")
+        st.markdown("*Check multiple to stack*")
+        
+        show_crime = st.checkbox("Crime Points", value=True)
+        show_transit = st.checkbox("Transit Stations", value=True)
+        show_lighting = st.checkbox("Street Lighting", value=False)
+        show_parks = st.checkbox("Parks", value=False)
+        
+        st.markdown("**Property Layers**")
+        show_zone_hulls = st.checkbox("Zoning Polygons", value=True, help="Show the colored shapes outlining each zone")
+        show_prop_points = st.checkbox("Property Points", value=True, help="Show individual property dots")
+        
+        st.divider()
+        
+        # ===================
+        # Map Style
+        # ===================
+        st.subheader("🎨 Map Style")
+        
+        use_dark_mode = st.checkbox(
+            "Dark Mode (Better for Lighting)",
+            value=False,
+            help="Dark map shows street lighting coverage more clearly"
+        )
+        
+        st.divider()
+        
+        # ===================
+        # Performance Settings
+        # ===================
+        st.subheader("⚡ Performance")
+        
+        crime_sample_size = st.select_slider(
+            "Crime Points to Display",
+            options=[1000, 5000, 10000, 20000, "All"],
+            value=10000,
+            help="Reduce for faster map loading"
+        )
+        
+        st.divider()
+        
+        # ===================
+        # Crime Filters
+        # ===================
+        # Note: We need to load data outside/inside form to get options?
+        # Streamlit forms run entirely on submit.
+        # But we need crime_types for the multiselect.
+        # It's better to load data BEFORE the form if possible, or cache it.
+        # We already cache it at top of sidebar in previous code, but here we need to ensure it's available.
+        
         st.subheader("🚨 Crime Filters")
         
         # Load crime data only once and cache in session state
@@ -210,7 +220,10 @@ with st.sidebar:
                 value=(min_year, max_year)
             )
         
-        st.divider()
+        st.markdown("<br>", unsafe_allow_html=True)
+        analyze_button = st.form_submit_button("🔄 Update Analysis & Map", type="primary")
+        
+    st.divider()
     
     # ===================
     # Data Summary
@@ -249,7 +262,7 @@ if len(selected_vars) > 0:
     with st.spinner("Computing property similarity blocks..."):
         properties = load_property_data()
         properties_with_coords = properties[properties['latitude'].notna() & properties['longitude'].notna()]
-        
+
         if len(properties_with_coords) > 0:
             properties_with_blocks, block_stats = create_similarity_blocks(
                 properties_with_coords,
@@ -258,40 +271,139 @@ if len(selected_vars) > 0:
                 min_cluster_size
             )
             
-            # Create feature group for property blocks
-            property_group = folium.FeatureGroup(name=f'🏘️ Property Blocks ({len(block_stats)})')
+            # Create feature groups for property layers
+            zones_group = folium.FeatureGroup(name=f'🏘️ Zoning Polygons ({len(block_stats)})')
+            points_group = folium.FeatureGroup(name=f'🏠 Property Points')
             
-            # Plot properties colored by similarity group
-            for group_id in properties_with_blocks['similarity_group'].unique():
-                if pd.isna(group_id) or group_id == -1:
-                    continue  # Skip noise points
+            # --- SEMANTIC COLORING SETUP ---
+            import matplotlib.cm as cm
+            import matplotlib.colors as mcolors
+            
+            # Get values for scaling
+            values = [stats['avg_property_value'] for stats in block_stats.values() if not stats.get('is_noise', False)]
+            if values:
+                min_val = min(values)
+                max_val = max(values)
+                norm = mcolors.Normalize(vmin=min_val, vmax=max_val)
+                cmap = cm.get_cmap('RdYlBu_r') # Red=High, Blue=Low (Reversed)
                 
-                group_data = properties_with_blocks[properties_with_blocks['similarity_group'] == group_id]
+                # Create Sidebar Legend
+                st.sidebar.markdown("### 🏷️ Zone Legend")
+                st.sidebar.caption("Color based on Avg Property Value")
                 
-                # Assign color
-                color_idx = int(group_id) % len(SIMILARITY_COLORS)
-                color = SIMILARITY_COLORS[color_idx]
+                # Simple HTML legend
+                legend_html = f"""
+                <div style="background: linear-gradient(to right, blue, yellow, red); height: 10px; width: 100%;"></div>
+                <div style="display: flex; justify-content: space-between; font-size: 12px;">
+                    <span>${min_val:,.0f}</span>
+                    <span>${max_val:,.0f}</span>
+                </div>
+                """
+                st.sidebar.markdown(legend_html, unsafe_allow_html=True)
+            else:
+                norm = None
+                cmap = None
+            # -------------------------------
+            
+            # Plot properties and zones
+            for group_id, stats in block_stats.items():
+                if stats.get('is_noise', False):
+                    continue
+                    
+                # Assign color based on value
+                if cmap and norm:
+                    val = stats['avg_property_value']
+                    rgba = cmap(norm(val))
+                    color = mcolors.to_hex(rgba)
+                else:
+                    # Fallback
+                    color_idx = int(group_id) % len(SIMILARITY_COLORS)
+                    color = SIMILARITY_COLORS[color_idx]
                 
-                # Add points for this group
-                for _, prop in group_data.iterrows():
+                # 1. DRAW ZONE POLYGONS (If enabled)
+                if show_zone_hulls:
+                    hull_coords = stats.get('convex_hull')
+                    if hull_coords and len(hull_coords) >= 3:
+                         folium.Polygon(
+                            locations=hull_coords,
+                            color=color,
+                            weight=2,
+                            fill=True,
+                            fillColor=color,
+                            fillOpacity=0.4,
+                            popup=folium.Popup(f"<b>{stats['label']}</b><br>Properties: {stats['n_properties']}", max_width=200),
+                            tooltip=f"Zone {group_id}"
+                         ).add_to(zones_group)
+                         
+                         # ADD TEXT LABEL
+                         # Find centroid for label
+                         poly_lats = [p[0] for p in hull_coords]
+                         poly_lons = [p[1] for p in hull_coords]
+                         centroid = [sum(poly_lats)/len(poly_lats), sum(poly_lons)/len(poly_lons)]
+                         
+                         folium.map.Marker(
+                            centroid,
+                            icon=folium.DivIcon(
+                                html=f"""
+                                <div style="
+                                    font-family: sans-serif; 
+                                    color: {color}; 
+                                    font-weight: bold; 
+                                    text-shadow: 1px 1px 0 #fff;
+                                    text-align: center;
+                                    white-space: nowrap;
+                                ">
+                                    Zone {group_id}<br>
+                                    <span style="font-size: 0.8em; color: #333;">{stats['n_properties']} props</span>
+                                </div>
+                                """
+                            )
+                         ).add_to(zones_group)
+
+                # 2. DRAW INDIVIDUAL POINTS (If enabled)
+                if show_prop_points:
+                    group_data = properties_with_blocks[properties_with_blocks['block_id'] == group_id]
+                    for _, prop in group_data.iterrows():
+                        folium.CircleMarker(
+                            location=[prop['latitude'], prop['longitude']],
+                            radius=3, # Smaller radius
+                            popup=folium.Popup(
+                                f"<b>Block {prop['block_id']}</b><br>"
+                                f"Value: ${prop['property_value']:,.0f}<br>"
+                                f"Age: {prop['building_age']:.0f} years<br>"
+                                f"Stability: {prop['zone_stability']:.2f}",
+                                max_width=250
+                            ),
+                            color=color,
+                            fillColor=color,
+                            fillOpacity=0.8,
+                            weight=0, # No border
+                            tooltip=f"Zone {prop['block_id']}"
+                        ).add_to(points_group)
+            
+            # Add groups to map based on checkboxes
+            if show_zone_hulls:
+                zones_group.add_to(m)
+            
+            if show_prop_points:
+                points_group.add_to(m)
+            
+            # Handle noise points (Gray)
+            noise_data = properties_with_blocks[properties_with_blocks['similarity_group'] == -1]
+            if len(noise_data) > 0:
+                 noise_group = folium.FeatureGroup(name='Unclassified Properties', show=False)
+                 for _, prop in noise_data.iterrows():
                     folium.CircleMarker(
                         location=[prop['latitude'], prop['longitude']],
-                        radius=5,
-                        popup=folium.Popup(
-                            f"<b>Block {prop['block_id']}</b><br>"
-                            f"Value: ${prop['property_value']:,.0f}<br>"
-                            f"Age: {prop['building_age']:.0f} years<br>"
-                            f"Type: {prop['property_type']}",
-                            max_width=250
-                        ),
-                        color=color,
-                        fillColor=color,
-                        fillOpacity=0.6,
-                        weight=1,
-                        tooltip=f"Block {prop['block_id']}"
-                    ).add_to(property_group)
-            
-            property_group.add_to(m)
+                        radius=2,
+                        color='#888888',
+                        fill=True,
+                        fillOpacity=0.5,
+                        popup="Unclassified"
+                    ).add_to(noise_group)
+                 noise_group.add_to(m)
+
+
         else:
             st.info("ℹ️ Property data being geocoded - using sample for demonstration")
 
