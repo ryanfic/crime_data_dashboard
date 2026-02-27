@@ -13,8 +13,10 @@ A_research/
 │   ├── persistent_homology_crime_analysis.py     # Persistent homology analysis
 │   ├── property_crime_tda.py                     # Property crime TDA analysis
 │   └── visualize_break_enter.py                  # Break & Enter visualization
-├── dashboard/              # Interactive Plotly Dash application
-│   ├── app.py             # Main dashboard application
+├── dashboard/              # Interactive Dashboards
+│   ├── web_dashboard/     # NEW: High-performance Vanilla JS + Leaflet Map
+│   ├── export_data.py     # Backend pipeline to clean & export JSON layers
+│   ├── app.py             # Legacy Streamlit dashboard
 │   ├── config.py          # Configuration settings
 │   ├── requirements.txt   # Dashboard dependencies
 │   ├── utils/             # Utility modules (data loading, geo processing)
@@ -33,8 +35,19 @@ A_research/
 
 ## Features
 
-### Interactive Dashboard
-The Plotly Dash dashboard (`dashboard/app.py`) provides:
+### Web Dashboard (New)
+The high-performance interactive map (`dashboard/web_dashboard/`) provides a fast, layer-based exploration of city data utilizing Canvas rendering for large datasets:
+- **Responsive Dark/Light mode base maps**
+- **Property Values & Age filtering sliders** with real-time average value analytics
+- **Crime Sub-type layers** (B&E, Theft, Mischief, etc.) with privacy-safe precise mapping
+- **City Infrastructure visualization**:
+  - Parks, Transit Stations (with meaningful icons), and Active Businesses
+  - **Glowing Street Lights** with adjustable illumination radiuses for environmental correlation
+  - **Interactive Street Network LineString layer** generated directly from junction CSVs
+- **Coordinate Tooltips** for every data point natively providing Lat/Lon metadata
+
+### Legacy Streamlit & Plotly Dashboard
+The secondary dashboard (`dashboard/app.py`) provides:
 - **Interactive crime mapping** with customizable filters
 - **Zoning district visualization** with color-coded categories
 - **Street lighting analysis** to examine correlations with crime
@@ -60,12 +73,26 @@ source venv/bin/activate
 pip install -r dashboard/requirements.txt
 ```
 
-### Running the Dashboard
+### Running the Web Dashboard (New)
+The web dashboard relies on frontend technologies (Vite) and does not require a backend server once the data is exported.
+```bash
+# Export the raw CSVs into web-optimized JSON (run once or when data changes)
+cd dashboard
+python export_data.py
+python utils/export_street_network.py
+
+# Run the frontend development server
+cd web_dashboard
+npm run dev
+```
+The dashboard will be available at `http://localhost:5174`
+
+### Running the Python Dashboards (Legacy)
 ```bash
 cd dashboard
-python app.py
+streamlit run app.py
 ```
-The dashboard will be available at `http://localhost:8050`
+*(The legacy dashboard will open on your localhost port)*
 
 ### Running Analysis Scripts
 ```bash
