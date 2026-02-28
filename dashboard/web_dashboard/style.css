@@ -266,6 +266,46 @@ input[type=range]::-webkit-slider-runnable-track {
   border-radius: 2px;
 }
 
+/* Radio & Gradient Styles */
+.radio-label {
+  display: flex;
+  align-items: center;
+  font-size: 0.85rem;
+  color: var(--text-main);
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.radio-label input {
+  margin-right: 8px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+.gradient-legend {
+  margin-top: 12px;
+  transition: opacity 0.3s ease;
+}
+
+.gradient-legend.hidden {
+  display: none;
+}
+
+.gradient-bar {
+  height: 8px;
+  border-radius: 4px;
+  width: 100%;
+  margin-bottom: 4px;
+  /* Background gradients will be overridden by JS depending on mode */
+}
+
+.gradient-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
 /* Stats Container */
 .stats-container {
   position: absolute;

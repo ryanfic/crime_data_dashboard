@@ -49,6 +49,27 @@
                             <label>Max Age: <span id="age-display">150 yrs</span></label>
                             <input type="range" id="prop-age" min="0" max="150" value="150">
                         </div>
+
+                        <div class="color-mode-container"
+                            style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
+                            <label
+                                style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px; display: block;">Color
+                                By Characteristic:</label>
+                            <label class="radio-label"><input type="radio" name="propColor" value="default" checked>
+                                Default Point</label>
+                            <label class="radio-label"><input type="radio" name="propColor" value="value"> Property
+                                Value</label>
+                            <label class="radio-label"><input type="radio" name="propColor" value="age"> Building
+                                Age</label>
+                        </div>
+
+                        <div id="gradient-legend" class="gradient-legend hidden">
+                            <div id="gradient-bar" class="gradient-bar"></div>
+                            <div class="gradient-labels">
+                                <span id="grad-start">Low</span>
+                                <span id="grad-end">High</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

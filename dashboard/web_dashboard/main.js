@@ -17,7 +17,8 @@ const state = {
     filters: {
         propMaxValue: 10000000,
         propMaxAge: 150,
-        lightRadius: 30
+        lightRadius: 30,
+        propertyColorMode: 'default' // 'default', 'value', 'age'
     },
     mapLayers: {}
 };
@@ -38,6 +39,47 @@ const COLORS = {
     'crime-Mischief': '#d946ef', // fuchsia
     'crime-Offence Against a Person': '#9f1239' // dark red
 };
+
+// --- Color Gradient Helpers ---
+function interpolateColor(color1, color2, factor) {
+    factor = Math.max(0, Math.min(1, factor)); // clamp between 0 and 1
+    const r = Math.round(color1[0] + factor * (color2[0] - color1[0]));
+    const g = Math.round(color1[1] + factor * (color2[1] - color1[1]));
+    const b = Math.round(color1[2] + factor * (color2[2] - color1[2]));
+    return `rgb(${r}, ${g}, ${b})`;
+}
+
+function multiInterpolateColor(stops, factor) {
+    factor = Math.max(0, Math.min(1, factor));
+    if (factor === 1) return `rgb(${stops[stops.length - 1].join(',')})`;
+    const segment = 1 / (stops.length - 1);
+    const index = Math.floor(factor / segment);
+    const remainder = (factor - (index * segment)) / segment;
+    return interpolateColor(stops[index], stops[index + 1], remainder);
+}
+
+// Deep Purple -> Blue -> Green -> Yellow -> Red -> Crimson
+const valueStops = [
+    [94, 79, 162], [50, 136, 189], [102, 194, 165], [171, 221, 164],
+    [230, 245, 152], [254, 224, 139], [253, 174, 97], [244, 109, 67],
+    [213, 62, 79], [158, 1, 66]
+];
+
+// Light Yellow -> Orange -> Pink -> Purple -> Black
+const ageStops = [
+    [252, 253, 191], [254, 159, 109], [222, 73, 104],
+    [140, 41, 129], [59, 15, 112], [0, 0, 4]
+];
+
+function getValueColor(value) {
+    const factor = Math.min(1, value / 5000000); // 0 to $5M
+    return multiInterpolateColor(valueStops, factor);
+}
+
+function getAgeColor(age) {
+    const factor = Math.min(1, Math.max(0, age) / 100); // 0 to 100 years
+    return multiInterpolateColor(ageStops, factor);
+}
 
 // Map Setup
 const map = L.map('map', {
@@ -190,11 +232,20 @@ function generateLayer(key, color, filterFn = null) {
                 return L.layerGroup([glow, bulb]);
             }
 
+            let dotColor = color;
+            if (datasetKey === 'properties') {
+                if (state.filters.propertyColorMode === 'value') {
+                    dotColor = getValueColor(feature.properties.property_value || 0);
+                } else if (state.filters.propertyColorMode === 'age') {
+                    dotColor = getAgeColor(feature.properties.building_age || 0);
+                }
+            }
+
             // Use circle markers for huge performance boost 
             // compared to standard DOM icon markers
             return L.circleMarker(latlng, {
                 radius: 4,
-                fillColor: color,
+                fillColor: dotColor,
                 color: '#fff',
                 weight: 0.5,
                 opacity: 0.8,
@@ -378,6 +429,37 @@ function setupEventListeners() {
     // Street Light slider
     const lightRadiusSlider = document.getElementById('light-radius');
     const lightDisplay = document.getElementById('light-display');
+
+    // Property Gradient Radio Buttons
+    const gradLegend = document.getElementById('gradient-legend');
+    const gradBar = document.getElementById('gradient-bar');
+    const gradStart = document.getElementById('grad-start');
+    const gradEnd = document.getElementById('grad-end');
+
+    document.querySelectorAll('input[name="propColor"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            state.filters.propertyColorMode = e.target.value;
+
+            if (state.filters.propertyColorMode === 'default') {
+                gradLegend.classList.add('hidden');
+            } else if (state.filters.propertyColorMode === 'value') {
+                gradLegend.classList.remove('hidden');
+                gradBar.style.background = 'linear-gradient(to right, rgb(94,79,162), rgb(50,136,189), rgb(102,194,165), rgb(171,221,164), rgb(230,245,152), rgb(254,224,139), rgb(253,174,97), rgb(244,109,67), rgb(213,62,79), rgb(158,1,66))';
+                gradStart.innerText = '$0';
+                gradEnd.innerText = '$5M+';
+            } else if (state.filters.propertyColorMode === 'age') {
+                gradLegend.classList.remove('hidden');
+                gradBar.style.background = 'linear-gradient(to right, rgb(252,253,191), rgb(254,159,109), rgb(222,73,104), rgb(140,41,129), rgb(59,15,112), rgb(0,0,4))';
+                gradStart.innerText = '0 yrs';
+                gradEnd.innerText = '100+ yrs';
+            }
+
+            // Immediately re-render properties to show updated colors
+            if (state.activeLayers.has('properties')) {
+                renderActiveLayers();
+            }
+        });
+    });
 
     lightRadiusSlider.addEventListener('input', (e) => {
         state.filters.lightRadius = Number(e.target.value);
