@@ -8,7 +8,9 @@
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="./style.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 
 <body class="dark-theme">
@@ -95,11 +97,58 @@
                         Against Person</label>
                 </div>
 
+                <!-- Spatial Blocks -->
+                <div class="control-group">
+                    <h3>Spatial Blocks</h3>
+                    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">Blocks formed by street
+                        intersections</p>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="layer-blocks" class="layer-toggle" data-layer="blocks">
+                        <span class="slider round"></span> Show Spatial Blocks
+                    </label>
+                    <div class="property-filters hidden" id="block-filters">
+                        <div class="color-mode-container" style="margin-top: 5px;">
+                            <label
+                                style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px; display: block;">Color
+                                Blocks By:</label>
+                            <label class="radio-label"><input type="radio" name="blockColor" value="value" checked>
+                                Average Property Value</label>
+                            <label class="radio-label"><input type="radio" name="blockColor" value="age"> Average
+                                Building Age</label>
+                        </div>
+                        <div id="block-gradient-legend" class="gradient-legend">
+                            <div id="block-gradient-bar" class="gradient-bar"></div>
+                            <div class="gradient-labels">
+                                <span id="block-grad-start">Low</span>
+                                <span id="block-grad-end">High</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- City Infrastructure -->
                 <div class="control-group">
                     <h3>City Infrastructure</h3>
-                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle"
-                            data-layer="street_network"> <span class="slider round"></span> Street Network</label>
+                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle" data-layer="street_network"
+                            id="layer-street-network"> <span class="slider round"></span> Street Network</label>
+                    <div class="property-filters hidden" id="street-filters">
+                        <div class="color-mode-container" style="margin-top: 5px;">
+                            <label
+                                style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px; display: block;">Color
+                                Streets By:</label>
+                            <label class="radio-label"><input type="radio" name="streetColor" value="default" checked>
+                                Default</label>
+                            <label class="radio-label"><input type="radio" name="streetColor" value="crime"> Crime
+                                Density & Intersections</label>
+                        </div>
+                        <div id="street-gradient-legend" class="gradient-legend hidden">
+                            <div id="street-gradient-bar" class="gradient-bar"></div>
+                            <div class="gradient-labels">
+                                <span id="street-grad-start">0</span>
+                                <span id="street-grad-end" style="color:red">High</span>
+                            </div>
+                        </div>
+                    </div>
                     <label class="toggle-switch"><input type="checkbox" class="layer-toggle" data-layer="transit"> <span
                             class="slider round"></span> Transit Stations</label>
                     <label class="toggle-switch"><input type="checkbox" class="layer-toggle" data-layer="lights"> <span
