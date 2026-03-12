@@ -35,10 +35,13 @@ const state = {
         propMaxAge: 150,
         lightRadius: 30,
         propertyColorMode: 'default', // 'default', 'value', 'age'
-        propertyColorMode: 'default', // 'default', 'value', 'age'
-        blockColorMode: 'value', // 'value', 'age'
-        streetColorMode: 'default'
+        blockColorMode: 'value',      // 'value', 'age'
+        blockSdThreshold: 3.0,        // max allowed SD for block outlier filter
+        blockGroupDiff: 0,             // max % difference allowed between grouped blocks (0 = no grouping)
+        streetColorMode: 'crime'
     },
+    blockPropertyIndex: new Map(),    // block_id -> { values: [], ages: [] }
+    blockGroups: new Map(),            // block_id -> group_avg (populated by computeBlockGroups)
     intersectionGrid: new Map(),
     streetGrid: new Map(),
     streetById: new Map(),
@@ -96,16 +99,17 @@ const ageStops = [
     [140, 41, 129], [59, 15, 112], [0, 0, 4]
 ];
 
-// Street Crime Colors: Light Yellow -> Orange -> Red -> Dark Red
-const streetCrimeStops = [
-    [255, 237, 160], [254, 178, 76], [240, 59, 32],
-    [189, 0, 38], [100, 0, 38]
-];
-
-function getStreetCrimeColor(count, maxVal) {
-    if (count === 0) return '#334155';
-    const factor = Math.min(1, Math.max(0, count / (maxVal || 1)));
-    return multiInterpolateColor(streetCrimeStops, factor);
+// Street Crime Colors — maximally distinct hues per crime-count level
+// Purple → Blue → Teal → Green → Yellow → Orange → Red
+function getStreetCrimeColor(count) {
+    if (count === 0) return '#0d0d1a'; // Near-black   (no crimes, dimmed)
+    if (count === 1) return '#7c3aed'; // Deep Purple   (1 crime)
+    if (count === 2) return '#2563eb'; // Strong Blue   (2 crimes)
+    if (count === 3) return '#0891b2'; // Teal          (3 crimes)
+    if (count <= 5) return '#16a34a'; // Green         (4-5 crimes)
+    if (count <= 7) return '#ca8a04'; // Gold/Yellow   (6-7 crimes)
+    if (count <= 9) return '#ea580c'; // Orange        (8-9 crimes)
+    return '#dc2626';                 // Red           (10+ crimes)
 }
 
 function getValueColor(value) {
@@ -219,6 +223,11 @@ async function loadDatasets() {
             }
         }
 
+        // Build per-block property index after properties are loaded
+        if (file.key === 'properties' && state.data.properties && state.data.properties.features) {
+            buildBlockPropertyIndex();
+        }
+
         loaded++;
         loadingText.innerText = `Loading Data (${loaded}/${files.length})...`;
     }
@@ -236,10 +245,114 @@ async function loadDatasets() {
     updateGradientLegends(); // trigger initial legend formats
 }
 
+// --- Per-Block Property Index ---
+// Built once at load time so SD slider updates are instant.
+function buildBlockPropertyIndex() {
+    state.blockPropertyIndex.clear();
+    state.data.properties.features.forEach(f => {
+        const p = f.properties;
+        const bid = p.block_id;
+        if (bid === undefined || bid === null) return;
+        if (!state.blockPropertyIndex.has(bid)) {
+            state.blockPropertyIndex.set(bid, { values: [], ages: [] });
+        }
+        const entry = state.blockPropertyIndex.get(bid);
+        if (p.property_value && p.property_value > 0) entry.values.push(p.property_value);
+        if (p.building_age && p.building_age > 0) entry.ages.push(p.building_age);
+    });
+}
+
+// Returns { filteredMean, removedCount, totalCount } for a block at the current SD threshold.
+// Falls back to stored avg if less than 2 properties exist in the index.
+function getFilteredBlockStats(blockId, mode) {
+    const entry = state.blockPropertyIndex.get(blockId);
+    const raw = entry ? (mode === 'value' ? entry.values : entry.ages) : [];
+
+    if (raw.length < 2) {
+        return { filteredMean: null, removedCount: 0, totalCount: raw.length };
+    }
+
+    // Compute mean & population std dev over raw values
+    const mean = raw.reduce((s, v) => s + v, 0) / raw.length;
+    const variance = raw.reduce((s, v) => s + (v - mean) ** 2, 0) / raw.length;
+    const sd = Math.sqrt(variance);
+
+    const threshold = state.filters.blockSdThreshold;
+    const filtered = sd > 0 ? raw.filter(v => Math.abs(v - mean) <= threshold * sd) : raw;
+
+    const filteredMean = filtered.length > 0
+        ? filtered.reduce((s, v) => s + v, 0) / filtered.length
+        : mean;
+
+    return {
+        filteredMean,
+        removedCount: raw.length - filtered.length,
+        totalCount: raw.length,
+        sd: Math.round(sd)
+    };
+}
+
+// --- Block Grouping ---
+// Groups blocks whose filtered averages are within `blockGroupDiff` % of each other.
+// Algorithm: sort blocks by value, then greedily group consecutive blocks where
+//   (currentValue - groupMin) / groupMin <= threshold
+// Returns the number of groups formed.
+function computeBlockGroups() {
+    state.blockGroups.clear();
+
+    if (!state.data.blocks || !state.data.blocks.features) return 0;
+
+    const threshold = state.filters.blockGroupDiff / 100; // e.g. 10% → 0.10
+    const mode = state.filters.blockColorMode;
+
+    // Build array of { block_id, avg } for every block that has data
+    const blockAvgs = [];
+    state.data.blocks.features.forEach(f => {
+        const bid = f.properties.block_id;
+        const vs = getFilteredBlockStats(bid, mode);
+        const avg = vs.filteredMean !== null
+            ? vs.filteredMean
+            : (mode === 'value' ? f.properties.avg_value : f.properties.avg_age);
+        if (avg > 0) blockAvgs.push({ bid, avg });
+    });
+
+    // Sort ascending by average value
+    blockAvgs.sort((a, b) => a.avg - b.avg);
+
+    let groupCount = 0;
+    let i = 0;
+    while (i < blockAvgs.length) {
+        const groupMin = blockAvgs[i].avg;
+        const members = [];
+        let j = i;
+
+        // Extend group while within threshold % of the group's minimum
+        while (j < blockAvgs.length &&
+            (blockAvgs[j].avg - groupMin) / (groupMin || 1) <= threshold) {
+            members.push(blockAvgs[j].avg);
+            j++;
+        }
+
+        // Group average = mean of all member averages
+        const groupAvg = members.reduce((s, v) => s + v, 0) / members.length;
+
+        // Register every member block
+        for (let k = i; k < j; k++) {
+            state.blockGroups.set(blockAvgs[k].bid, groupAvg);
+        }
+
+        groupCount++;
+        i = j;
+    }
+
+    return groupCount;
+}
+
 // --- Spatial Grid Logic ---
 // Buckets street lights into a grid dict for fast radius searches
 function buildLightGrid() {
     state.lightGrid.clear();
+
     state.data.street_lights.features.forEach(f => {
         if (!f.geometry || !f.geometry.coordinates) return;
         const [lon, lat] = f.geometry.coordinates;
@@ -292,16 +405,54 @@ function buildStreetNetworkGrids() {
                 if (index === 0 || index === f.geometry.coordinates.length - 1) {
                     const exactKey = `${lon.toFixed(5)},${lat.toFixed(5)}`;
                     if (!state.intersections.has(exactKey)) {
-                        const intObj = { lat, lon, count: 0, exactKey };
+                        const intObj = { lat, lon, count: 0, exactKey, streetIds: new Set() };
                         state.intersections.set(exactKey, intObj);
 
                         if (!state.intersectionGrid.has(gridKey)) state.intersectionGrid.set(gridKey, []);
                         state.intersectionGrid.get(gridKey).push(intObj);
                     }
+                    state.intersections.get(exactKey).streetIds.add(id);
                 }
             });
         }
     });
+}
+
+// Perpendicular distance from point (px,py) to segment (ax,ay)-(bx,by)
+// All coords in lon/lat; returns distance in meters and the t parameter [0,1]
+function distPointToSegment(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay;
+    if (dx === 0 && dy === 0) {
+        return { dist: getDistanceMeters(py, px, ay, ax), t: 0 };
+    }
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
+    const footLon = ax + t * dx;
+    const footLat = ay + t * dy;
+    return { dist: getDistanceMeters(py, px, footLat, footLon), t };
+}
+
+// Parse HUNDRED_BLOCK (e.g. "10XX W 70TH AVE", "OAK ST", "E GEORGIA ST")
+// Returns 'EW' if it's an avenue/way (runs E-W), 'NS' if a street/drive (runs N-S), 'unknown' otherwise
+function getStreetDirection(hundredBlock) {
+    if (!hundredBlock) return 'unknown';
+    const ub = hundredBlock.toUpperCase();
+    // Avenues, Ways, Crescents, Drives, Mews tend to run E-W in Vancouver's grid
+    if (/\bAVE?\b|\bAVENUE\b|\bWAY\b|\bCRES\b|\bBLVD\b/.test(ub)) return 'EW';
+    // Streets, Roads, Lanes tend to run N-S in Vancouver's grid
+    if (/\bST\b|\bSTREET\b|\bRD\b|\bROAD\b|\bLN\b|\bLANE\b|\bDR\b|\bDRIVE\b/.test(ub)) return 'NS';
+    return 'unknown';
+}
+
+// Segment orientation: returns 'EW' if mostly horizontal, 'NS' if mostly vertical
+function getSegmentOrientation(coords) {
+    if (coords.length < 2) return 'unknown';
+    const [ax, ay] = coords[0];
+    const [bx, by] = coords[coords.length - 1];
+    const dLon = Math.abs(bx - ax);   // longitude difference ~ E-W extent
+    const dLat = Math.abs(by - ay);   // latitude difference ~ N-S extent
+    if (dLon > dLat * 1.5) return 'EW';   // clearly more horizontal
+    if (dLat > dLon * 1.5) return 'NS';   // clearly more vertical
+    return 'unknown';
 }
 
 function updateStreetCrimeStats() {
@@ -321,6 +472,8 @@ function updateStreetCrimeStats() {
     });
 
     const offsets = [[0, 0], [-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]];
+    // Max search radius: 120 metres
+    const MAX_DIST_M = 120;
 
     activeCrimes.forEach(crime => {
         if (!crime.geometry || !crime.geometry.coordinates) return;
@@ -328,59 +481,70 @@ function updateStreetCrimeStats() {
         const latIdx = Math.floor(lat / state.gridSizeDeg);
         const lonIdx = Math.floor(lon / state.gridSizeDeg);
 
-        let foundIntersection = false;
+        // Direction hint from HUNDRED_BLOCK (e.g. "OAK ST" -> NS, "W 70TH AVE" -> EW)
+        const crimeDir = getStreetDirection(crime.properties.HUNDRED_BLOCK || '');
 
-        for (const [dLat, dLon] of offsets) {
-            if (foundIntersection) break;
-            const key = `${latIdx + dLat},${lonIdx + dLon}`;
-            const intList = state.intersectionGrid.get(key);
-            if (intList) {
-                for (const iObj of intList) {
-                    if (Math.abs(lat - iObj.lat) > 0.0002 || Math.abs(lon - iObj.lon) > 0.0003) continue;
-                    if (getDistanceMeters(lat, lon, iObj.lat, iObj.lon) <= 20) {
-                        iObj.count++;
-                        foundIntersection = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (foundIntersection) return;
-
-        let closestDist = Infinity;
-        let closestId = null;
+        let bestDist = MAX_DIST_M;
+        let bestId = null;
 
         for (const [dLat, dLon] of offsets) {
             const key = `${latIdx + dLat},${lonIdx + dLon}`;
             const streetList = state.streetGrid.get(key);
-            if (streetList) {
-                for (const sId of streetList) {
-                    const f = state.streetById.get(sId);
-                    if (f && f.geometry && f.geometry.coordinates) {
-                        for (const [slon, slat] of f.geometry.coordinates) {
-                            if (Math.abs(lat - slat) > 0.001 || Math.abs(lon - slon) > 0.0015) continue;
-                            const d = getDistanceMeters(lat, lon, slat, slon);
-                            if (d < closestDist) {
-                                closestDist = d;
-                                closestId = sId;
-                            }
+            if (!streetList) continue;
+
+            for (const sId of streetList) {
+                const f = state.streetById.get(sId);
+                if (!f || !f.geometry || !f.geometry.coordinates) continue;
+
+                const coords = f.geometry.coordinates;
+                // Measure perpendicular distance from crime point to each segment
+                for (let i = 0; i < coords.length - 1; i++) {
+                    const [ax, ay] = coords[i];
+                    const [bx, by] = coords[i + 1];
+
+                    // Broad bounding-box reject (fast)
+                    const minLat = Math.min(ay, by) - 0.001;
+                    const maxLat = Math.max(ay, by) + 0.001;
+                    const minLon = Math.min(ax, bx) - 0.0015;
+                    const maxLon = Math.max(ax, bx) + 0.0015;
+                    if (lat < minLat || lat > maxLat || lon < minLon || lon > maxLon) continue;
+
+                    const { dist } = distPointToSegment(lon, lat, ax, ay, bx, by);
+                    if (dist >= bestDist) continue;
+
+                    // Direction tiebreaker: if the crime's HUNDRED_BLOCK tells us the
+                    // street orientation, penalise segments going the wrong way.
+                    // A 20 m penalty is enough to prefer the correct segment at intersections
+                    // without overriding a genuinely closer one on the same block.
+                    if (crimeDir !== 'unknown') {
+                        const segDir = getSegmentOrientation(coords);
+                        if (segDir !== 'unknown' && segDir !== crimeDir) {
+                            // Wrong orientation — only update if it's dramatically closer
+                            if (dist + 20 >= bestDist) continue;
                         }
                     }
+
+                    bestDist = dist;
+                    bestId = sId;
                 }
             }
         }
 
-        if (closestId) {
-            const val = (state.streetCrimeCounts.get(closestId) || 0) + 1;
-            state.streetCrimeCounts.set(closestId, val);
+        if (bestId) {
+            const val = (state.streetCrimeCounts.get(bestId) || 0) + 1;
+            state.streetCrimeCounts.set(bestId, val);
             if (val > state.streetMaxCrime) state.streetMaxCrime = val;
         }
     });
 
-    // Also update intersection max
+    // Aggregate intersection crime counts by summing contributing street segments
     state.intersections.forEach(i => {
-        if (i.count > state.streetMaxCrime) state.streetMaxCrime = i.count;
+        let total = 0;
+        i.streetIds.forEach(id => {
+            total += (state.streetCrimeCounts.get(id) || 0);
+        });
+        i.count = total;
+        if (total > state.streetMaxCrime) state.streetMaxCrime = total;
     });
 }
 
@@ -429,22 +593,44 @@ function generateLayer(key, color, filterFn = null) {
             if (datasetKey === 'street_network' && state.filters.streetColorMode === 'crime') {
                 const count = state.streetCrimeCounts.get(feature.properties.id) || 0;
                 if (count === 0) {
-                    finalColor = '#334155';
+                    // No crimes: use the exact same style as default street network
+                    finalColor = COLORS.street_network; // slate-700 default
+                    finalWeight = 1;
                 } else {
-                    finalColor = getStreetCrimeColor(count, state.streetMaxCrime);
-                    finalWeight = 1.5 + (count / state.streetMaxCrime) * 3; // Thinner segments
+                    finalColor = getStreetCrimeColor(count);
+                    // Thicker lines for crime-active segments so they stand out above the baseline grid
+                    finalWeight = count === 1 ? 1.8 : count <= 3 ? 2.5 : 3.5;
                 }
             }
 
             let fillColor = color;
             if (datasetKey === 'blocks') {
-                fillColor = state.filters.blockColorMode === 'value' ? getBlockValueColor(feature.properties.avg_value) : getBlockAgeColor(feature.properties.avg_age);
+                const mode = state.filters.blockColorMode;
+                const bid = feature.properties.block_id;
+
+                // If grouping is active and this block belongs to a group, use the group avg
+                let displayVal;
+                if (state.filters.blockGroupDiff > 0 && state.blockGroups.has(bid)) {
+                    displayVal = state.blockGroups.get(bid);
+                } else {
+                    const stats = getFilteredBlockStats(bid, mode);
+                    displayVal = stats.filteredMean !== null
+                        ? stats.filteredMean
+                        : (mode === 'value' ? feature.properties.avg_value : feature.properties.avg_age);
+                }
+
+                fillColor = mode === 'value' ? getBlockValueColor(displayVal) : getBlockAgeColor(displayVal);
             }
 
+            // In crime mode: 0-crime streets get default opacity; crime streets get slightly boosted opacity
+            const isCrimeMode = datasetKey === 'street_network' && state.filters.streetColorMode === 'crime';
+            const crimeCount = isCrimeMode ? (state.streetCrimeCounts.get(feature.properties.id) || 0) : 1;
+            const lineOpacity = isCrimeMode ? (crimeCount === 0 ? 0.8 : 0.95) : 0.8;
+
             return {
-                color: datasetKey === 'blocks' ? '#000' : finalColor, // Default color for lines/polygons
+                color: datasetKey === 'blocks' ? '#000' : finalColor,
                 weight: datasetKey === 'blocks' ? 1 : finalWeight,
-                opacity: datasetKey === 'blocks' ? parseFloat(document.getElementById('blocks-opacity')?.value || 0.6) : 0.8,
+                opacity: datasetKey === 'blocks' ? parseFloat(document.getElementById('blocks-opacity')?.value || 0.6) : lineOpacity,
                 fillColor: fillColor,
                 fillOpacity: datasetKey === 'blocks' ? 0.35 : 0.2
             };
@@ -551,16 +737,45 @@ function generateLayer(key, color, filterFn = null) {
 
                 popupContent += `<h4 style="margin:0 0 5px; color:#2563eb">${address}</h4>`;
 
-                if (p.is_value_outlier) popupContent += `<span style="display:inline-block;background:#ef4444;color:white;padding:2px 6px;border-radius:4px;font-size:0.75rem;margin-bottom:6px;">Value Outlier (Z: ${p.value_z_score})</span><br>`;
-                if (p.is_age_outlier) popupContent += `<span style="display:inline-block;background:#9333ea;color:white;padding:2px 6px;border-radius:4px;font-size:0.75rem;margin-bottom:6px;">Age Outlier (Z: ${p.age_z_score})</span><br>`;
+                // --- Compute Z-scores live, the same way as the SD filter ---
+                // mean = block_avg_val (accurate full-dataset mean stored on each property)
+                // SD   = sqrt(Σ(index_value − mean)² / n) centred on that same mean
+                // This guarantees popup Z == filter Z → no inconsistency
+                let valueZ = null, ageZ = null;
 
-                if (p.is_value_outlier || p.is_age_outlier) {
-                    popupContent += `<span style="font-size: 0.75rem; color: var(--text-muted); display:block; margin-bottom: 6px;"><i>*Z-score denotes standard deviations from the block average.</i></span>`;
+                if (p.block_id !== undefined && p.block_avg_val && p.property_value) {
+                    const entry = state.blockPropertyIndex.get(p.block_id);
+                    if (entry && entry.values.length >= 2) {
+                        const mean = p.block_avg_val;
+                        const variance = entry.values.reduce((s, v) => s + (v - mean) ** 2, 0) / entry.values.length;
+                        const sd = Math.sqrt(variance);
+                        if (sd > 0) valueZ = (p.property_value - mean) / sd;
+                    }
                 }
 
-                if (p.property_value) popupContent += `<strong>Value:</strong> $${p.property_value.toLocaleString()} <span style="font-size: 0.8em; color: gray;">(Block Avg: $${p.block_avg_val ? p.block_avg_val.toLocaleString() : 'N/A'})</span><br>`;
+                if (p.block_id !== undefined && p.block_avg_age && p.building_age) {
+                    const entry = state.blockPropertyIndex.get(p.block_id);
+                    if (entry && entry.ages.length >= 2) {
+                        const mean = p.block_avg_age;
+                        const variance = entry.ages.reduce((s, v) => s + (v - mean) ** 2, 0) / entry.ages.length;
+                        const sd = Math.sqrt(variance);
+                        if (sd > 0) ageZ = (p.building_age - mean) / sd;
+                    }
+                }
+
+                if (valueZ !== null && Math.abs(valueZ) > state.filters.blockSdThreshold) {
+                    popupContent += `<span style="display:inline-block;background:#ef4444;color:white;padding:2px 6px;border-radius:4px;font-size:0.75rem;margin-bottom:6px;">Value Outlier (Z: ${valueZ.toFixed(2)})</span><br>`;
+                }
+                if (ageZ !== null && Math.abs(ageZ) > state.filters.blockSdThreshold) {
+                    popupContent += `<span style="display:inline-block;background:#9333ea;color:white;padding:2px 6px;border-radius:4px;font-size:0.75rem;margin-bottom:6px;">Age Outlier (Z: ${ageZ.toFixed(2)})</span><br>`;
+                }
+                if (valueZ !== null || ageZ !== null) {
+                    popupContent += `<span style="font-size:0.75rem;color:var(--text-muted);display:block;margin-bottom:6px;"><i>*Z-score = deviations from this block's mean (same calculation as the filter).</i></span>`;
+                }
+
+                if (p.property_value) popupContent += `<strong>Value:</strong> $${p.property_value.toLocaleString()} <span style="font-size:0.8em;color:gray;">(Block Avg: $${p.block_avg_val ? p.block_avg_val.toLocaleString() : 'N/A'}${valueZ !== null ? ` | Z: ${valueZ.toFixed(2)}` : ''})</span><br>`;
                 if (p.property_type) popupContent += `<strong>Type:</strong> ${p.property_type}<br>`;
-                if (p.building_age) popupContent += `<strong>Age:</strong> ${p.building_age} years <span style="font-size: 0.8em; color: gray;">(Block Avg: ${p.block_avg_age ? p.block_avg_age : 'N/A'})</span><br>`;
+                if (p.building_age) popupContent += `<strong>Age:</strong> ${p.building_age} years <span style="font-size:0.8em;color:gray;">(Block Avg: ${p.block_avg_age ? p.block_avg_age : 'N/A'}${ageZ !== null ? ` | Z: ${ageZ.toFixed(2)}` : ''})</span><br>`;
                 if (p.ZONING_DISTRICT) popupContent += `<strong>Zoning:</strong> ${p.ZONING_DISTRICT}<br>`;
                 popupContent += `<strong>Lat/Lon:</strong> ${lat}, ${lon}<br>`;
             }
@@ -576,14 +791,24 @@ function generateLayer(key, color, filterFn = null) {
             else if (datasetKey === 'blocks') {
                 popupContent += `<h4 style="margin:0 0 5px; color:#f59e0b">Spatial Block #${p.block_id}</h4>`;
 
-                // Add Property Count calculation dynamically if it isn't in JSON
-                // Defaulting to "Multiple" if count isn't exported, but let's try to export it from python next
-                const propCount = p.property_count || 'Detailed';
+                const propCount = p.property_count || 'N/A';
+                popupContent += `<strong>Properties in Block:</strong> ${propCount}<br>`;
 
-                popupContent += `<strong>Properties Present:</strong> ${propCount}<br>`;
-
-                if (p.avg_value) popupContent += `<strong>Avg Property Value:</strong> $${Math.round(p.avg_value).toLocaleString()}<br>`;
-                if (p.avg_age) popupContent += `<strong>Avg Building Age:</strong> ${Math.round(p.avg_age)} years<br>`;
+                // Show both raw avg and SD-filtered avg
+                if (p.avg_value) {
+                    const vs = getFilteredBlockStats(p.block_id, 'value');
+                    popupContent += `<strong>Avg Property Value (raw):</strong> $${Math.round(p.avg_value).toLocaleString()}<br>`;
+                    if (vs.removedCount > 0) {
+                        popupContent += `<strong>Avg Property Value (filtered, ${state.filters.blockSdThreshold}σ):</strong> $${Math.round(vs.filteredMean).toLocaleString()} <span style="color:#f59e0b">(−${vs.removedCount} outlier${vs.removedCount > 1 ? 's' : ''})</span><br>`;
+                    }
+                }
+                if (p.avg_age) {
+                    const as_ = getFilteredBlockStats(p.block_id, 'age');
+                    popupContent += `<strong>Avg Building Age (raw):</strong> ${Math.round(p.avg_age)} yrs<br>`;
+                    if (as_.removedCount > 0) {
+                        popupContent += `<strong>Avg Building Age (filtered, ${state.filters.blockSdThreshold}σ):</strong> ${Math.round(as_.filteredMean)} yrs <span style="color:#f59e0b">(−${as_.removedCount} outlier${as_.removedCount > 1 ? 's' : ''})</span><br>`;
+                    }
+                }
 
                 popupContent += `<strong>Total Crimes:</strong> ${p.crime_count || 0}<br>`;
             }
@@ -638,6 +863,59 @@ function renderActiveLayers() {
         return orderA - orderB;
     });
 
+    // --- Block grouping + dynamic colour-scale rescaling ---
+    // 1. Recompute block groups (always, even if threshold is 0)
+    // 2. Rebuild dynamicLimits from whatever values will actually be displayed
+    if (state.activeLayers.has('blocks') && state.data.blocks && state.data.blocks.features) {
+        // Step 1: (re)compute groups based on current SD-filtered averages
+        const groupCount = computeBlockGroups();
+
+        // Update the group count display
+        const gcEl = document.getElementById('block-group-count');
+        if (gcEl) gcEl.innerText = `${groupCount} group${groupCount !== 1 ? 's' : ''} formed`;
+
+        // Step 2: collect the values that will actually colour the blocks
+        const displayVals = [];
+        const displayAges = [];
+
+        const useGrouping = state.filters.blockGroupDiff > 0;
+
+        state.data.blocks.features.forEach(f => {
+            const bid = f.properties.block_id;
+
+            // Value axis
+            if (useGrouping && state.blockGroups.has(bid)) {
+                const gAvg = state.blockGroups.get(bid);
+                if (gAvg > 0) displayVals.push(gAvg);
+            } else {
+                const vs = getFilteredBlockStats(bid, 'value');
+                if (vs.filteredMean !== null && vs.filteredMean > 0) displayVals.push(vs.filteredMean);
+            }
+
+            // Age axis (always from filtered stats — grouping only affects the active mode colour)
+            const as_ = getFilteredBlockStats(bid, 'age');
+            if (as_.filteredMean !== null && as_.filteredMean > 0) displayAges.push(as_.filteredMean);
+        });
+
+        function percentile(arr, p) {
+            if (arr.length === 0) return 0;
+            const sorted = arr.slice().sort((a, b) => a - b);
+            return sorted[Math.floor((p / 100) * (sorted.length - 1))];
+        }
+
+        if (displayVals.length > 0) {
+            state.dynamicLimits.blockValMin = percentile(displayVals, 2);
+            state.dynamicLimits.blockValMax = percentile(displayVals, 98);
+        }
+        if (displayAges.length > 0) {
+            state.dynamicLimits.blockAgeMin = percentile(displayAges, 2);
+            state.dynamicLimits.blockAgeMax = percentile(displayAges, 98);
+        }
+
+        updateGradientLegends();
+    }
+
+
     // Render layers in defined z-order
     sortedLayers.forEach(layerKey => {
         let filterFn = null;
@@ -646,14 +924,58 @@ function renderActiveLayers() {
         if (layerKey === 'properties') {
             filterFn = (feature) => {
                 const props = feature.properties;
-                // If slider is NOT maxed out, filter out values above the slider. 
-                // If it is exactly 10,000,000, we treat it as "$10M+" and let everything through.
+                // Existing slider filters (value and age max)
                 if (state.filters.propMaxValue < 10000000 && props.property_value > state.filters.propMaxValue) return false;
-
                 if (props.building_age > state.filters.propMaxAge) return false;
+
+                // --- Block SD outlier filter ---
+                // Only active when threshold is below max (3.0).
+                //
+                // MEAN: uses the pre-stored block_avg_val / block_avg_age (computed from the
+                //       FULL dataset during Python export) — same reference the popup shows.
+                // SD:   computed from the client-side index, CENTRED on the true full-dataset
+                //       mean (not the sample mean), so Z-scores are consistent with the popup.
+                // FALLBACK for sparse blocks (< 2 index entries):
+                //       use the pre-stored value_z_score / age_z_score if available; otherwise
+                //       keep the property (cannot determine Z without enough data).
+                if (state.filters.blockSdThreshold < 3.0 && props.block_id !== undefined) {
+                    const entry = state.blockPropertyIndex.get(props.block_id);
+                    const threshold = state.filters.blockSdThreshold;
+
+                    // --- Value check ---
+                    if (props.property_value && props.block_avg_val) {
+                        const trueMean = props.block_avg_val;
+
+                        if (entry && entry.values.length >= 2) {
+                            // Variance centred on the true full-dataset mean
+                            const variance = entry.values.reduce((s, v) => s + (v - trueMean) ** 2, 0) / entry.values.length;
+                            const sd = Math.sqrt(variance);
+                            if (sd > 0 && Math.abs(props.property_value - trueMean) > threshold * sd) return false;
+                        } else if (props.value_z_score !== undefined) {
+                            // Sparse block — use pre-stored Z-score (computed from full dataset)
+                            if (Math.abs(props.value_z_score) > threshold) return false;
+                        }
+                        // else: truly unknowable (no index data, no pre-stored Z) → keep property
+                    }
+
+                    // --- Age check ---
+                    if (props.building_age && props.block_avg_age) {
+                        const trueMean = props.block_avg_age;
+
+                        if (entry && entry.ages.length >= 2) {
+                            const variance = entry.ages.reduce((s, v) => s + (v - trueMean) ** 2, 0) / entry.ages.length;
+                            const sd = Math.sqrt(variance);
+                            if (sd > 0 && Math.abs(props.building_age - trueMean) > threshold * sd) return false;
+                        } else if (props.age_z_score !== undefined) {
+                            if (Math.abs(props.age_z_score) > threshold) return false;
+                        }
+                    }
+                }
+
                 return true;
             };
         }
+
 
         const l = generateLayer(layerKey, COLORS[layerKey] || '#ffffff', filterFn);
         if (l) {
@@ -669,19 +991,49 @@ function renderActiveLayers() {
     if (state.activeLayers.has('street_network') && state.filters.streetColorMode === 'crime') {
         const hotspotsGrp = L.featureGroup();
         state.intersections.forEach(intObj => {
-            if (intObj.count > 0) {
-                const hColor = getStreetCrimeColor(intObj.count, state.streetMaxCrime);
-                const circle = L.circleMarker([intObj.lat, intObj.lon], {
-                    radius: 6 + (intObj.count / state.streetMaxCrime) * 12,
-                    fillColor: hColor,
-                    color: '#ffffff',
-                    weight: 2,
+            if (intObj.count >= 10) { // Only show for notable intersections
+                let outerColor = '';
+                let outerRadius = 0;
+                let strokeWidth = 3;
+                let level = '';
+
+                if (intObj.count >= 30) {
+                    outerColor = '#d946ef'; // Magenta (Very High)
+                    outerRadius = 25; // 25 meters
+                    level = 'Very High';
+                } else if (intObj.count >= 20) {
+                    outerColor = '#f97316'; // Orange (High)
+                    outerRadius = 18; // 18 meters
+                    level = 'High';
+                } else {
+                    outerColor = '#eab308'; // Yellow (Moderate)
+                    outerRadius = 12; // 12 meters
+                    level = 'Moderate';
+                }
+
+                const outer = L.circle([intObj.lat, intObj.lon], {
+                    radius: outerRadius,
+                    fillColor: 'transparent', // Hollow ring
+                    color: outerColor,
+                    weight: strokeWidth,
                     opacity: 1,
-                    fillOpacity: 0.9,
-                    className: 'intersection-hotspot'
+                    className: 'intersection-hotspot',
+                    interactive: true
                 });
-                circle.bindPopup(`<h4 style="margin:0;color:#ef4444">Intersection Hotspot</h4><strong>Intersection Crimes:</strong> ${intObj.count}`);
-                circle.addTo(hotspotsGrp);
+
+                const inner = L.circle([intObj.lat, intObj.lon], {
+                    radius: Math.max(3, outerRadius - 6),
+                    fillColor: '#fef08a', // Solid yellow core
+                    color: 'transparent',
+                    weight: 0,
+                    fillOpacity: 1,
+                    interactive: false
+                });
+
+                outer.bindPopup(`<h4 style="margin:0;color:${outerColor}">${level} Intersection Hotspot</h4><strong>Aggregated Crimes:</strong> ${intObj.count}`);
+
+                outer.addTo(hotspotsGrp);
+                inner.addTo(hotspotsGrp);
             }
         });
         hotspotsGrp.addTo(map);
@@ -838,6 +1190,14 @@ function setupEventListeners() {
                 }
             }
 
+            // If a crime layer changed and street network is active in crime mode,
+            // the street coloring needs to reflect the new set of active crimes.
+            if (layerKey.startsWith('crime-') &&
+                state.activeLayers.has('street_network') &&
+                state.filters.streetColorMode === 'crime') {
+                updateStreetCrimeStats();
+            }
+
             renderActiveLayers();
         });
     });
@@ -951,12 +1311,44 @@ function setupEventListeners() {
         });
     });
 
+    // Block SD Outlier Slider
+    const blockSdSlider = document.getElementById('block-sd');
+    const blockSdDisplay = document.getElementById('block-sd-display');
+    if (blockSdSlider) {
+        blockSdSlider.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            state.filters.blockSdThreshold = val;
+            if (val >= 3.0) {
+                blockSdDisplay.innerText = '3.0σ (all included)';
+            } else {
+                blockSdDisplay.innerText = `${val.toFixed(1)}σ`;
+            }
+        });
+        // Re-render blocks + properties on mouse-up (keeps dragging smooth)
+        blockSdSlider.addEventListener('change', () => {
+            const hasBlocks = state.activeLayers.has('blocks');
+            const hasProps = state.activeLayers.has('properties');
+            if (hasBlocks || hasProps) renderActiveLayers();
+        });
+    }
+
+
+    // Block grouping slider
+    const blockGroupSlider = document.getElementById('block-group-diff');
+    const blockGroupDisplay = document.getElementById('block-group-diff-display');
+    if (blockGroupSlider) {
+        blockGroupSlider.addEventListener('input', (e) => {
+            const val = parseInt(e.target.value, 10);
+            state.filters.blockGroupDiff = val;
+            blockGroupDisplay.innerText = val === 0 ? '0% (each block separate)' : `${val}%`;
+        });
+        blockGroupSlider.addEventListener('change', () => {
+            if (state.activeLayers.has('blocks')) renderActiveLayers();
+        });
+    }
+
     // Street Color Radio Buttons
     const streetGradLegend = document.getElementById('street-gradient-legend');
-    const streetGradBar = document.getElementById('street-gradient-bar');
-    if (streetGradBar) {
-        streetGradBar.style.background = 'linear-gradient(to right, rgb(255,237,160), rgb(254,178,76), rgb(240,59,32), rgb(189,0,38), rgb(100,0,38))';
-    }
 
     document.querySelectorAll('input[name="streetColor"]').forEach(radio => {
         radio.addEventListener('change', (e) => {

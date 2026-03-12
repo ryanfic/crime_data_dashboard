@@ -123,6 +123,47 @@
                                 <span id="block-grad-end">High</span>
                             </div>
                         </div>
+                        <div style="margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.08);">
+                            <label
+                                style="font-size:0.8rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-bottom:6px;">
+                                <span>Outlier Filter (SD)</span>
+                                <span id="block-sd-display" style="color:#f8fafc; font-weight:600;">3.0σ (all
+                                    included)</span>
+                            </label>
+                            <input type="range" id="block-sd" min="0.5" max="3.0" step="0.1" value="3.0"
+                                style="width:100%;">
+                            <div
+                                style="display:flex; justify-content:space-between; font-size:0.72rem; color:var(--text-muted); margin-top:3px;">
+                                <span>0.5σ (strict)</span>
+                                <span>3.0σ (none removed)</span>
+                            </div>
+                            <div style="font-size:0.72rem; color:var(--text-muted); margin-top:6px; line-height:1.4;">
+                                Properties beyond Nσ from their block mean are excluded before recomputing the average.
+                            </div>
+                        </div>
+
+                        <!-- Block Grouping Slider -->
+                        <div style="margin-top:14px;">
+                            <label
+                                style="font-size:0.8rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-bottom:6px;">
+                                <span>Group Blocks (% diff)</span>
+                                <span id="block-group-diff-display" style="color:#f8fafc; font-weight:600;">0% (each
+                                    block separate)</span>
+                            </label>
+                            <input type="range" id="block-group-diff" min="0" max="50" step="1" value="0"
+                                style="width:100%;">
+                            <div
+                                style="display:flex; justify-content:space-between; font-size:0.72rem; color:var(--text-muted); margin-top:3px;">
+                                <span>0% (each block alone)</span>
+                                <span>50% (large groups)</span>
+                            </div>
+                            <div style="font-size:0.72rem; color:var(--text-muted); margin-top:6px; line-height:1.4;">
+                                Blocks within N% of each other's average are merged and coloured by their shared group
+                                average.
+                            </div>
+                            <div id="block-group-count"
+                                style="font-size:0.72rem; color:#f59e0b; margin-top:4px; font-weight:600;"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -136,16 +177,84 @@
                             <label
                                 style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px; display: block;">Color
                                 Streets By:</label>
-                            <label class="radio-label"><input type="radio" name="streetColor" value="default" checked>
+                            <label class="radio-label"><input type="radio" name="streetColor" value="default">
                                 Default</label>
-                            <label class="radio-label"><input type="radio" name="streetColor" value="crime"> Crime
+                            <label class="radio-label"><input type="radio" name="streetColor" value="crime" checked>
+                                Crime
                                 Density & Intersections</label>
                         </div>
-                        <div id="street-gradient-legend" class="gradient-legend hidden">
-                            <div id="street-gradient-bar" class="gradient-bar"></div>
-                            <div class="gradient-labels">
-                                <span id="street-grad-start">0</span>
-                                <span id="street-grad-end" style="color:red">High</span>
+                        <div id="street-gradient-legend" style="margin-top:10px;">
+                            <div
+                                style="font-size:0.75rem; font-weight:bold; color:#f8fafc; margin-bottom:8px; letter-spacing:0.5px;">
+                                STREET SEGMENT CRIME DENSITY</div>
+                            <div class="discrete-legend"
+                                style="display:flex; flex-direction:column; gap:6px; margin-bottom: 12px;">
+                                <div style="display:flex; align-items:center; font-size:0.8rem;"><span
+                                        style="display:inline-block; width:24px; height:3px; background:#0d0d1a; opacity:0.5; margin-right:8px;"></span>
+                                    0 crimes</div>
+                                <div style="display:flex; align-items:center; font-size:0.8rem;"><span
+                                        style="display:inline-block; width:24px; height:3px; background:#7c3aed; margin-right:8px;"></span>
+                                    1 crime</div>
+                                <div style="display:flex; align-items:center; font-size:0.8rem;"><span
+                                        style="display:inline-block; width:24px; height:3px; background:#2563eb; margin-right:8px;"></span>
+                                    2 crimes</div>
+                                <div style="display:flex; align-items:center; font-size:0.8rem;"><span
+                                        style="display:inline-block; width:24px; height:3px; background:#0891b2; margin-right:8px;"></span>
+                                    3 crimes</div>
+                                <div style="display:flex; align-items:center; font-size:0.8rem;"><span
+                                        style="display:inline-block; width:24px; height:3px; background:#16a34a; margin-right:8px;"></span>
+                                    4-5 crimes</div>
+                                <div style="display:flex; align-items:center; font-size:0.8rem;"><span
+                                        style="display:inline-block; width:24px; height:3px; background:#ca8a04; margin-right:8px;"></span>
+                                    6-7 crimes</div>
+                                <div style="display:flex; align-items:center; font-size:0.8rem;"><span
+                                        style="display:inline-block; width:24px; height:3px; background:#ea580c; margin-right:8px;"></span>
+                                    8-9 crimes</div>
+                                <div style="display:flex; align-items:center; font-size:0.8rem;"><span
+                                        style="display:inline-block; width:24px; height:3px; background:#dc2626; margin-right:8px;"></span>
+                                    10+ crimes</div>
+                            </div>
+                            <div
+                                style="font-size:0.75rem; font-weight:bold; color:#f8fafc; margin-top:15px; margin-bottom:8px; letter-spacing:0.5px;">
+                                CRIME HOTSPOTS</div>
+                            <div class="discrete-legend intersection-legend"
+                                style="display:flex; flex-direction:column; gap:8px;">
+                                <div style="display:flex; align-items:center; font-size:0.8rem;">
+                                    <div
+                                        style="position:relative; width:16px; height:16px; margin-right:12px; display:flex; align-items:center; justify-content:center;">
+                                        <div
+                                            style="position:absolute; width:16px; height:16px; border-radius:50%; border:2px solid #d946ef;">
+                                        </div>
+                                        <div
+                                            style="position:absolute; width:6px; height:6px; border-radius:50%; background:#fef08a;">
+                                        </div>
+                                    </div>
+                                    <span style="color:#f8fafc;">Very High</span>
+                                </div>
+                                <div style="display:flex; align-items:center; font-size:0.8rem;">
+                                    <div
+                                        style="position:relative; width:16px; height:16px; margin-right:12px; display:flex; align-items:center; justify-content:center;">
+                                        <div
+                                            style="position:absolute; width:14px; height:14px; border-radius:50%; border:2px solid #f97316;">
+                                        </div>
+                                        <div
+                                            style="position:absolute; width:6px; height:6px; border-radius:50%; background:#fef08a;">
+                                        </div>
+                                    </div>
+                                    <span style="color:#f8fafc;">High</span>
+                                </div>
+                                <div style="display:flex; align-items:center; font-size:0.8rem;">
+                                    <div
+                                        style="position:relative; width:16px; height:16px; margin-right:12px; display:flex; align-items:center; justify-content:center;">
+                                        <div
+                                            style="position:absolute; width:12px; height:12px; border-radius:50%; border:2px solid #eab308;">
+                                        </div>
+                                        <div
+                                            style="position:absolute; width:6px; height:6px; border-radius:50%; background:#fef08a;">
+                                        </div>
+                                    </div>
+                                    <span style="color:#eab308;">Moderate</span>
+                                </div>
                             </div>
                         </div>
                     </div>
