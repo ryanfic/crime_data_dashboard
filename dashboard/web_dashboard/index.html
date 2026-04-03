@@ -24,6 +24,11 @@
         <!-- Fullscreen Map -->
         <div id="map"></div>
 
+        <!-- TDA floating overlay is intentionally hidden — content lives in the sidebar -->
+        <div id="tda-insights-panel" style="display:none;">
+            <div id="tda-stats-content"></div>
+        </div>
+
         <!-- Top Stats Container (Dynamic) -->
         <div id="stats-container" class="stats-container"></div>
 
@@ -115,6 +120,21 @@
                                 Average Property Value</label>
                             <label class="radio-label"><input type="radio" name="blockColor" value="age"> Average
                                 Building Age</label>
+                            <label class="radio-label"><input type="radio" name="blockColor" value="crime"> 🔴 Crime Count</label>
+                        </div>
+                        <div id="block-crime-legend" class="gradient-legend hidden" style="margin-top:10px;">
+                            <div style="font-size:0.75rem; font-weight:bold; color:#f8fafc; margin-bottom:6px; letter-spacing:0.5px;">CRIMES PER BLOCK (2020 VPD DATA)</div>
+                            <div style="display:flex; flex-direction:column; gap:5px; font-size:0.75rem; color:#cbd5e1;">
+                                <div style="display:flex;align-items:center;gap:8px;"><span style="width:18px;height:12px;border-radius:2px;background:#1e293b;display:inline-block;border:1px solid #334155;"></span> 0 crimes</div>
+                                <div style="display:flex;align-items:center;gap:8px;"><span style="width:18px;height:12px;border-radius:2px;background:#14532d;display:inline-block;"></span> 1–5 crimes</div>
+                                <div style="display:flex;align-items:center;gap:8px;"><span style="width:18px;height:12px;border-radius:2px;background:#ca8a04;display:inline-block;"></span> 6–20 crimes</div>
+                                <div style="display:flex;align-items:center;gap:8px;"><span style="width:18px;height:12px;border-radius:2px;background:#ea580c;display:inline-block;"></span> 21–50 crimes</div>
+                                <div style="display:flex;align-items:center;gap:8px;"><span style="width:18px;height:12px;border-radius:2px;background:#dc2626;display:inline-block;"></span> 51–150 crimes</div>
+                                <div style="display:flex;align-items:center;gap:8px;"><span style="width:18px;height:12px;border-radius:2px;background:#7f1d1d;display:inline-block;"></span> 150+ crimes</div>
+                            </div>
+                            <div style="font-size:0.7rem; color:#94a3b8; margin-top:8px; line-height:1.5;">
+                                Based on <b>33,752</b> VPD 2020 incidents. Each crime is assigned to its enclosing block polygon via geometric point-in-polygon join. Note the Downtown East Side / Strathcona concentration.
+                            </div>
                         </div>
                         <div id="block-gradient-legend" class="gradient-legend">
                             <div id="block-gradient-bar" class="gradient-bar"></div>
@@ -167,6 +187,35 @@
                     </div>
                 </div>
 
+                <!-- TDA Insights -->
+                <div class="control-group"
+                    style="background: rgba(244, 114, 182, 0.05); border: 1px solid rgba(244, 114, 182, 0.2); border-radius: 8px; padding: 12px; margin-bottom: 20px;">
+                    <h3 style="color: #f472b6; margin-top: 0;">TDA Insights</h3>
+                    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">Persistent Homology H1
+                        Loops</p>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="layer-tda-loops" class="layer-toggle" data-layer="tda_loops">
+                        <span class="slider round" style="background-color: #334155;"></span> <span
+                            style="font-weight: 500; color: #f8fafc;">Show H1 Loops</span>
+                    </label>
+                    <div id="loop-display-controls" class="hidden"
+                        style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(244, 114, 182, 0.2);">
+                        <label
+                            style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px; display: block;">Loop
+                            Display:</label>
+                        <label class="radio-label"><input type="radio" name="loopMode" value="mode1"> Simplex
+                            structure</label>
+                        <label class="radio-label"><input type="radio" name="loopMode" value="mode2" checked> Boundary
+                            cycle</label>
+                        <label class="radio-label"><input type="radio" name="loopMode" value="mode3"> Zone
+                            overview</label>
+                    </div>
+                    <!-- Loop × Block insights — rendered here inside the sidebar -->
+                    <div id="tda-inline-content"
+                        style="display:none; margin-top:14px; padding-top:12px; border-top:1px solid rgba(244,114,182,0.2); font-size:0.85rem; color:#cbd5e1; text-align:left; line-height:1.5;">
+                    </div>
+                </div>
+
                 <!-- City Infrastructure -->
                 <div class="control-group">
                     <h3>City Infrastructure</h3>
@@ -214,48 +263,6 @@
                                         style="display:inline-block; width:24px; height:3px; background:#dc2626; margin-right:8px;"></span>
                                     10+ crimes</div>
                             </div>
-                            <div
-                                style="font-size:0.75rem; font-weight:bold; color:#f8fafc; margin-top:15px; margin-bottom:8px; letter-spacing:0.5px;">
-                                CRIME HOTSPOTS</div>
-                            <div class="discrete-legend intersection-legend"
-                                style="display:flex; flex-direction:column; gap:8px;">
-                                <div style="display:flex; align-items:center; font-size:0.8rem;">
-                                    <div
-                                        style="position:relative; width:16px; height:16px; margin-right:12px; display:flex; align-items:center; justify-content:center;">
-                                        <div
-                                            style="position:absolute; width:16px; height:16px; border-radius:50%; border:2px solid #d946ef;">
-                                        </div>
-                                        <div
-                                            style="position:absolute; width:6px; height:6px; border-radius:50%; background:#fef08a;">
-                                        </div>
-                                    </div>
-                                    <span style="color:#f8fafc;">Very High</span>
-                                </div>
-                                <div style="display:flex; align-items:center; font-size:0.8rem;">
-                                    <div
-                                        style="position:relative; width:16px; height:16px; margin-right:12px; display:flex; align-items:center; justify-content:center;">
-                                        <div
-                                            style="position:absolute; width:14px; height:14px; border-radius:50%; border:2px solid #f97316;">
-                                        </div>
-                                        <div
-                                            style="position:absolute; width:6px; height:6px; border-radius:50%; background:#fef08a;">
-                                        </div>
-                                    </div>
-                                    <span style="color:#f8fafc;">High</span>
-                                </div>
-                                <div style="display:flex; align-items:center; font-size:0.8rem;">
-                                    <div
-                                        style="position:relative; width:16px; height:16px; margin-right:12px; display:flex; align-items:center; justify-content:center;">
-                                        <div
-                                            style="position:absolute; width:12px; height:12px; border-radius:50%; border:2px solid #eab308;">
-                                        </div>
-                                        <div
-                                            style="position:absolute; width:6px; height:6px; border-radius:50%; background:#fef08a;">
-                                        </div>
-                                    </div>
-                                    <span style="color:#eab308;">Moderate</span>
-                                </div>
-                            </div>
                         </div>
                     </div>
                     <label class="toggle-switch"><input type="checkbox" class="layer-toggle" data-layer="transit"> <span
@@ -275,6 +282,36 @@
                 </div>
             </div>
         </aside>
+
+        <!-- Right-Side Analysis Button Panel -->
+        <div id="analysis-btn-panel" class="analysis-btn-panel">
+            <button class="analysis-btn" data-modal="boundary-stats" title="Boundary Crime Statistics">
+                <span class="analysis-btn-icon">📊</span>
+                <span class="analysis-btn-label">Boundary</span>
+            </button>
+            <button class="analysis-btn" data-modal="ph-comparison" title="Persistence Diagram Comparison">
+                <span class="analysis-btn-icon">🔬</span>
+                <span class="analysis-btn-label">PH Diagrams</span>
+            </button>
+            <button class="analysis-btn" data-modal="barcode-comparison" title="Persistence Barcode Comparison">
+                <span class="analysis-btn-icon">📈</span>
+                <span class="analysis-btn-label">Barcodes</span>
+            </button>
+            <a href="./ph_dashboard.html" class="analysis-btn" title="Persistent Homology Dashboard"
+                style="text-decoration:none;">
+                <span class="analysis-btn-icon">🧬</span>
+                <span class="analysis-btn-label">PH Dashboard</span>
+            </a>
+        </div>
+
+        <!-- Analysis Modal Overlay (shared) -->
+        <div id="analysis-modal" class="analysis-modal" style="display:none;">
+            <div class="analysis-modal-content glass-panel">
+                <button id="analysis-modal-close" class="analysis-modal-close">&times;</button>
+                <h3 id="analysis-modal-title" class="analysis-modal-title"></h3>
+                <div id="analysis-modal-body" class="analysis-modal-body"></div>
+            </div>
+        </div>
     </div>
 
     <script type="module" src="./main.js"></script>

@@ -1,0 +1,5 @@
+cd "/Volumes/ZX20/A_research copy"
+python src/ph_server.py
+cd "/Volumes/ZX20/A_research copy"
+python -m http.server 3000
+http://localhost:3000/dashboard/web_dashboard/ph_dashboard.html

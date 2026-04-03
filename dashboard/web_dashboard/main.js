@@ -38,7 +38,8 @@ const state = {
         blockColorMode: 'value',      // 'value', 'age'
         blockSdThreshold: 3.0,        // max allowed SD for block outlier filter
         blockGroupDiff: 0,             // max % difference allowed between grouped blocks (0 = no grouping)
-        streetColorMode: 'crime'
+        streetColorMode: 'crime',
+        loopMode: 'mode2'
     },
     blockPropertyIndex: new Map(),    // block_id -> { values: [], ages: [] }
     blockGroups: new Map(),            // block_id -> group_avg (populated by computeBlockGroups)
@@ -134,6 +135,17 @@ function getBlockAgeColor(age) {
     return multiInterpolateColor(ageStops, factor);
 }
 
+// Crime-count choropleth: dark green → amber → orange → red → deep red
+// Thresholds tuned to Vancouver 2020 VPD data (max block = 464, mean = 7.6)
+function getBlockCrimeColor(count) {
+    if (!count || count === 0) return '#1e293b'; // slate background — no crimes
+    if (count <= 5)  return '#14532d'; // dark green  — very low
+    if (count <= 20) return '#ca8a04'; // amber       — moderate
+    if (count <= 50) return '#ea580c'; // orange-red  — high
+    if (count <= 150) return '#dc2626'; // red         — very high
+    return '#7f1d1d';                  // deep crimson — extreme (DTES/CBD)
+}
+
 function getAgeColor(age) {
     const factor = Math.min(1, Math.max(0, age) / 100); // 0 to 100 years
     return multiInterpolateColor(ageStops, factor);
@@ -192,7 +204,8 @@ async function loadDatasets() {
         { key: 'businesses', url: './public/data/businesses.json' },
         { key: 'parks', url: './public/data/parks.json' },
         { key: 'street_network', url: './public/data/street_network.geojson' },
-        { key: 'blocks', url: './public/data/blocks.json' }
+        { key: 'blocks', url: './public/data/blocks.json' },
+        { key: 'tda_loops', url: './public/data/crime_loops.json' }
     ];
 
     let loaded = 0;
@@ -221,6 +234,20 @@ async function loadDatasets() {
                 state.dynamicLimits.blockAgeMin = Math.min(...validAges);
                 state.dynamicLimits.blockAgeMax = Math.max(...validAges);
             }
+
+            // Build a fast lookup for raw block stats (age, crime count, neighbours)
+            // used by the TDA panel per-loop profile
+            state.blockStatsById = new Map();
+            bFeatures.forEach(f => {
+                const p = f.properties;
+                state.blockStatsById.set(p.block_id, {
+                    avg_value: p.avg_value || 0,
+                    avg_age: p.avg_age || 0,
+                    crime_count: p.crime_count || 0,
+                    property_count: p.property_count || 0,
+                    neighbors: p.neighbors || []
+                });
+            });
         }
 
         // Build per-block property index after properties are loaded
@@ -577,6 +604,112 @@ function generateLayer(key, color, filterFn = null) {
     }
     const filteredData = { type: 'FeatureCollection', features: featuresToRender };
 
+    if (datasetKey === 'tda_loops') {
+        const loopMode = state.filters.loopMode || 'mode2';
+        const group = L.featureGroup();
+        featuresToRender.forEach((feature) => {
+            const p = feature.properties;
+            const geom = p[loopMode + '_coords'];
+            if (!geom) return;
+
+            const color = p.rank_color || '#f472b6';
+            let shapeLayer;
+
+            if (loopMode === 'mode1') {
+                shapeLayer = L.polyline(geom.map(line => line.map(pt => [pt[1], pt[0]])), {
+                    color: color, weight: 2, opacity: 0.35, className: 'tda-glow-line'
+                });
+                group.addLayer(shapeLayer);
+
+                const uniquePoints = new Set();
+                geom.forEach(line => line.forEach(pt => uniquePoints.add(pt[1] + ',' + pt[0])));
+                uniquePoints.forEach(ptStr => {
+                    const [lat, lon] = ptStr.split(',').map(Number);
+                    group.addLayer(L.circleMarker([lat, lon], {
+                        radius: 3, fillColor: color, color: color, opacity: 1, fillOpacity: 1, weight: 0
+                    }));
+                });
+            } else if (loopMode === 'mode2') {
+                shapeLayer = L.polygon(geom[0].map(pt => [pt[1], pt[0]]), {
+                    color: color, fillColor: color, weight: 2, opacity: 0.85, fillOpacity: 0.25, className: 'tda-glow-line'
+                });
+                group.addLayer(shapeLayer);
+            } else if (loopMode === 'mode3') {
+                const latLons = geom.map(ring => ring.map(pt => [pt[1], pt[0]]));
+                shapeLayer = L.polygon(latLons, {
+                    color: color, fillColor: color, weight: 1.5, opacity: 0.7, fillOpacity: 0.18, dashArray: null, className: 'tda-glow-line'
+                });
+                group.addLayer(shapeLayer);
+            }
+
+            if (shapeLayer) {
+                let valHtml = "No matching block data";
+                const blockId = p.closest_block;
+                if (blockId && state.blockPropertyIndex.has(blockId)) {
+                    const stats = getFilteredBlockStats(blockId, 'value');
+                    if (stats.filteredMean > 0) {
+                        valHtml = `$${(stats.filteredMean / 1000000).toFixed(2)}M`;
+                    }
+                }
+
+                // Compute area live from the polygon's rendered latlngs using
+                // a spherical Shoelace formula — p.area_km2 in the JSON is often 0
+                let liveAreaKm2 = 0;
+                if (loopMode === 'mode2' || loopMode === 'mode3') {
+                    try {
+                        const lls = shapeLayer.getLatLngs ? shapeLayer.getLatLngs() : [];
+                        const pts = Array.isArray(lls[0]) ? lls[0] : lls; // handle nested arrays
+                        if (pts.length >= 3) {
+                            const R = 6371; // Earth radius km
+                            let area = 0;
+                            for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+                                const lat1 = pts[j].lat * Math.PI / 180;
+                                const lat2 = pts[i].lat * Math.PI / 180;
+                                const dLon = (pts[i].lng - pts[j].lng) * Math.PI / 180;
+                                area += (dLon) * (2 + Math.sin(lat1) + Math.sin(lat2));
+                            }
+                            liveAreaKm2 = Math.abs(area * R * R / 2);
+                        }
+                    } catch (_) { }
+                }
+                const areaStr = liveAreaKm2 > 0
+                    ? (liveAreaKm2 >= 1 ? `${liveAreaKm2.toFixed(2)} km²` : `${(liveAreaKm2 * 1e6).toFixed(0)} m²`)
+                    : '';
+                let extraArea = (loopMode === 'mode2' || loopMode === 'mode3') && areaStr ? `Area: ${areaStr}` : '';
+                let extraHood = loopMode === 'mode3' ? `Zone: ${p.neighbourhood}` : '';
+
+                // Format the crime type as a readable title (e.g. "Break and Enter Residential/Other")
+                const crimeLabel = p.crime_type || 'Crime';
+
+                shapeLayer.bindTooltip(`
+                    <div style="font-family: 'Outfit', sans-serif; text-align:center;">
+                        <b style="color:${color};">${crimeLabel} Ring #${p.rank}</b><br/>
+                        <span style="font-size: 0.8rem; color:#666;">Persistence: ${p.persistence}</span><br/>
+                        ${extraArea ? `<span style="font-size: 0.8rem; color:#999;">${extraArea}</span><br/>` : ''}
+                        ${extraHood ? `<span style="font-size: 0.8rem; color:#999;">${extraHood}</span><br/>` : ''}
+                        <div style="margin-top:4px; padding-top:4px; border-top: 1px solid #eee;">
+                            Surrounded Zone Value:<br/>
+                            <b>${valHtml}</b>
+                        </div>
+                    </div>
+                `, { sticky: true });
+
+                shapeLayer.on({
+                    mouseover: (e) => {
+                        e.target.setStyle({ weight: 4 });
+                        e.target.bringToFront();
+                    },
+                    mouseout: (e) => {
+                        e.target.setStyle({ weight: (loopMode === 'mode1' ? 2 : (loopMode === 'mode2' ? 2 : 1.5)) });
+                    }
+                });
+            }
+        });
+        updateStatCard(key, featuresToRender.length, filteredData);
+        console.log(`Mode switched to ${loopMode}, rendering ${featuresToRender.length} loops`);
+        return group;
+    }
+
     // Update specific stat card for this layer
     updateStatCard(key, featuresToRender.length, filteredData);
 
@@ -608,18 +741,24 @@ function generateLayer(key, color, filterFn = null) {
                 const mode = state.filters.blockColorMode;
                 const bid = feature.properties.block_id;
 
-                // If grouping is active and this block belongs to a group, use the group avg
-                let displayVal;
-                if (state.filters.blockGroupDiff > 0 && state.blockGroups.has(bid)) {
-                    displayVal = state.blockGroups.get(bid);
+                if (mode === 'crime') {
+                    // Crime choropleth: use stored crime_count directly from blocks.json
+                    // (populated by generate_spatial_blocks.py via point-in-polygon join on 33,752 VPD 2020 incidents)
+                    const crimeCount = feature.properties.crime_count || 0;
+                    fillColor = getBlockCrimeColor(crimeCount);
                 } else {
-                    const stats = getFilteredBlockStats(bid, mode);
-                    displayVal = stats.filteredMean !== null
-                        ? stats.filteredMean
-                        : (mode === 'value' ? feature.properties.avg_value : feature.properties.avg_age);
+                    // If grouping is active and this block belongs to a group, use the group avg
+                    let displayVal;
+                    if (state.filters.blockGroupDiff > 0 && state.blockGroups.has(bid)) {
+                        displayVal = state.blockGroups.get(bid);
+                    } else {
+                        const stats = getFilteredBlockStats(bid, mode);
+                        displayVal = stats.filteredMean !== null
+                            ? stats.filteredMean
+                            : (mode === 'value' ? feature.properties.avg_value : feature.properties.avg_age);
+                    }
+                    fillColor = mode === 'value' ? getBlockValueColor(displayVal) : getBlockAgeColor(displayVal);
                 }
-
-                fillColor = mode === 'value' ? getBlockValueColor(displayVal) : getBlockAgeColor(displayVal);
             }
 
             // In crime mode: 0-crime streets get default opacity; crime streets get slightly boosted opacity
@@ -920,6 +1059,14 @@ function renderActiveLayers() {
     sortedLayers.forEach(layerKey => {
         let filterFn = null;
 
+        // Filter TDA loops by active crime layers
+        if (layerKey === 'tda_loops') {
+            filterFn = (feature) => {
+                const type = feature.properties.crime_type;
+                return state.activeLayers.has('crime-' + type);
+            };
+        }
+
         // Apply property slider filters if this is the property layer
         if (layerKey === 'properties') {
             filterFn = (feature) => {
@@ -986,59 +1133,9 @@ function renderActiveLayers() {
 
     // Calculate dynamic cross-layer stats and inject into UI
     updateIlluminationStats();
+    updateTdaPanel();
 
-    // Render Intersection Hotspots if active
-    if (state.activeLayers.has('street_network') && state.filters.streetColorMode === 'crime') {
-        const hotspotsGrp = L.featureGroup();
-        state.intersections.forEach(intObj => {
-            if (intObj.count >= 10) { // Only show for notable intersections
-                let outerColor = '';
-                let outerRadius = 0;
-                let strokeWidth = 3;
-                let level = '';
-
-                if (intObj.count >= 30) {
-                    outerColor = '#d946ef'; // Magenta (Very High)
-                    outerRadius = 25; // 25 meters
-                    level = 'Very High';
-                } else if (intObj.count >= 20) {
-                    outerColor = '#f97316'; // Orange (High)
-                    outerRadius = 18; // 18 meters
-                    level = 'High';
-                } else {
-                    outerColor = '#eab308'; // Yellow (Moderate)
-                    outerRadius = 12; // 12 meters
-                    level = 'Moderate';
-                }
-
-                const outer = L.circle([intObj.lat, intObj.lon], {
-                    radius: outerRadius,
-                    fillColor: 'transparent', // Hollow ring
-                    color: outerColor,
-                    weight: strokeWidth,
-                    opacity: 1,
-                    className: 'intersection-hotspot',
-                    interactive: true
-                });
-
-                const inner = L.circle([intObj.lat, intObj.lon], {
-                    radius: Math.max(3, outerRadius - 6),
-                    fillColor: '#fef08a', // Solid yellow core
-                    color: 'transparent',
-                    weight: 0,
-                    fillOpacity: 1,
-                    interactive: false
-                });
-
-                outer.bindPopup(`<h4 style="margin:0;color:${outerColor}">${level} Intersection Hotspot</h4><strong>Aggregated Crimes:</strong> ${intObj.count}`);
-
-                outer.addTo(hotspotsGrp);
-                inner.addTo(hotspotsGrp);
-            }
-        });
-        hotspotsGrp.addTo(map);
-        state.mapLayers['intersection_hotspots'] = hotspotsGrp;
-    }
+    // Intersection hotspots rendering removed per user request
 }
 
 // Stats UI Logic
@@ -1125,6 +1222,11 @@ function updateIlluminationStats() {
         </div>
     `;
     statsContainer.insertAdjacentHTML('afterbegin', cardHtml); // Put it first
+
+    // Sync the TDA panel filtering whenever layers change
+    if (state.activeLayers.has('tda_loops')) {
+        updateTdaPanel();
+    }
 }
 
 function getStatTitle(layerKey) {
@@ -1179,6 +1281,15 @@ function setupEventListeners() {
                     const el = document.getElementById('street-filters');
                     if (el) el.classList.remove('hidden');
                 }
+                if (layerKey === 'tda_loops') {
+                    const controls = document.getElementById('loop-display-controls');
+                    const inlineContent = document.getElementById('tda-inline-content');
+                    if (controls) controls.classList.remove('hidden');
+                    if (inlineContent) {
+                        inlineContent.style.display = 'block';
+                        updateTdaPanel(); // populate sidebar content
+                    }
+                }
             } else {
                 state.activeLayers.delete(layerKey);
                 if (layerKey === 'properties') document.getElementById('property-filters').classList.add('hidden');
@@ -1187,6 +1298,12 @@ function setupEventListeners() {
                 if (layerKey === 'street_network') {
                     const el = document.getElementById('street-filters');
                     if (el) el.classList.add('hidden');
+                }
+                if (layerKey === 'tda_loops') {
+                    const controls = document.getElementById('loop-display-controls');
+                    const inlineContent = document.getElementById('tda-inline-content');
+                    if (controls) controls.classList.add('hidden');
+                    if (inlineContent) inlineContent.style.display = 'none';
                 }
             }
 
@@ -1297,16 +1414,32 @@ function setupEventListeners() {
         radio.addEventListener('change', (e) => {
             state.filters.blockColorMode = e.target.value;
 
-            if (state.filters.blockColorMode === 'value') {
-                blockGradBar.style.background = 'linear-gradient(to right, rgb(94,79,162), rgb(50,136,189), rgb(102,194,165), rgb(171,221,164), rgb(230,245,152), rgb(254,224,139), rgb(253,174,97), rgb(244,109,67), rgb(213,62,79), rgb(158,1,66))';
-                // Update to dynamic text next
-            } else if (state.filters.blockColorMode === 'age') {
-                blockGradBar.style.background = 'linear-gradient(to right, rgb(252,253,191), rgb(254,159,109), rgb(222,73,104), rgb(140,41,129), rgb(59,15,112), rgb(0,0,4))';
+            const blockGradLegend = document.getElementById('block-gradient-legend');
+            const blockCrimeLegend = document.getElementById('block-crime-legend');
+
+            if (state.filters.blockColorMode === 'crime') {
+                // Show discrete crime legend, hide continuous gradient
+                if (blockGradLegend) blockGradLegend.classList.add('hidden');
+                if (blockCrimeLegend) blockCrimeLegend.classList.remove('hidden');
+            } else {
+                if (blockCrimeLegend) blockCrimeLegend.classList.add('hidden');
+                if (blockGradLegend) blockGradLegend.classList.remove('hidden');
+                if (state.filters.blockColorMode === 'value') {
+                    blockGradBar.style.background = 'linear-gradient(to right, rgb(94,79,162), rgb(50,136,189), rgb(102,194,165), rgb(171,221,164), rgb(230,245,152), rgb(254,224,139), rgb(253,174,97), rgb(244,109,67), rgb(213,62,79), rgb(158,1,66))';
+                } else if (state.filters.blockColorMode === 'age') {
+                    blockGradBar.style.background = 'linear-gradient(to right, rgb(252,253,191), rgb(254,159,109), rgb(222,73,104), rgb(140,41,129), rgb(59,15,112), rgb(0,0,4))';
+                }
+                updateGradientLegends();
             }
-            updateGradientLegends();
 
             if (state.activeLayers.has('blocks')) {
                 renderActiveLayers();
+            }
+            // Bug 3 fix: refresh TDA panel when metric mode changes
+            if (state.activeLayers.has('tda_loops')) updateTdaPanel();
+            // Refresh boundary modal if open
+            if (state._analysisModalOpen === '📊 Boundary Crime Statistics') {
+                document.getElementById('analysis-modal-body').innerHTML = renderBoundaryStatsModal();
             }
         });
     });
@@ -1329,6 +1462,12 @@ function setupEventListeners() {
             const hasBlocks = state.activeLayers.has('blocks');
             const hasProps = state.activeLayers.has('properties');
             if (hasBlocks || hasProps) renderActiveLayers();
+            // Bug 1 fix: refresh TDA panel — SD threshold changes the filtered block mean
+            if (state.activeLayers.has('tda_loops')) updateTdaPanel();
+            // Refresh boundary modal if open
+            if (state._analysisModalOpen === '📊 Boundary Crime Statistics') {
+                document.getElementById('analysis-modal-body').innerHTML = renderBoundaryStatsModal();
+            }
         });
     }
 
@@ -1344,6 +1483,12 @@ function setupEventListeners() {
         });
         blockGroupSlider.addEventListener('change', () => {
             if (state.activeLayers.has('blocks')) renderActiveLayers();
+            // Bug 2 fix: refresh TDA panel — grouping changes which average is used per loop
+            if (state.activeLayers.has('tda_loops')) updateTdaPanel();
+            // Refresh boundary modal if open
+            if (state._analysisModalOpen === '📊 Boundary Crime Statistics') {
+                document.getElementById('analysis-modal-body').innerHTML = renderBoundaryStatsModal();
+            }
         });
     }
 
@@ -1359,6 +1504,16 @@ function setupEventListeners() {
                 streetGradLegend.classList.add('hidden');
             }
             if (state.activeLayers.has('street_network')) {
+                renderActiveLayers();
+            }
+        });
+    });
+
+    // Loop Display Radio Buttons
+    document.querySelectorAll('input[name="loopMode"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            state.filters.loopMode = e.target.value;
+            if (state.activeLayers.has('tda_loops')) {
                 renderActiveLayers();
             }
         });
@@ -1380,5 +1535,474 @@ function updateGradientLegends() {
     }
 }
 
+function updateTdaPanel() {
+    // Render inside the sidebar — not the floating overlay
+    const pContainer = document.getElementById('tda-inline-content');
+    if (!pContainer || !state.data.tda_loops || !state.data.tda_loops.features) return;
+
+    // Filter loops to only those whose crime type is currently enabled
+    const activeLoops = state.data.tda_loops.features.filter(f => state.activeLayers.has('crime-' + f.properties.crime_type));
+
+    if (activeLoops.length === 0) {
+        pContainer.innerHTML = `<p style="color: #94a3b8; padding: 10px 0; margin: 0;">Enable a specific crime layer in the sidebar to view its topological structural rings.</p>`;
+        return;
+    }
+
+    const mode = state.filters.blockColorMode; // 'value' or 'age'
+    const useGrouping = state.filters.blockGroupDiff > 0;
+
+    // Bug 4 fix: ensure block groups are computed if grouping is on but map wasn't rendered yet
+    if (useGrouping && state.blockGroups.size === 0) {
+        computeBlockGroups();
+    }
+
+    // Helper: returns the effective display value for a block — respects both the SD
+    // threshold (via getFilteredBlockStats) AND the grouping allowance (via blockGroups).
+    // This mirrors exactly what is painted on the map.
+    function effectiveBlockVal(bId) {
+        if (useGrouping && state.blockGroups.has(bId)) {
+            return state.blockGroups.get(bId);
+        }
+        if (state.blockPropertyIndex.has(bId)) {
+            const s = getFilteredBlockStats(bId, mode);
+            return s.filteredMean || 0;
+        }
+        return 0;
+    }
+
+    // City-wide average (using the same effective value function so the comparison is apples-to-apples)
+    let sumCity = 0;
+    let countCity = 0;
+    if (state.data.blocks && state.data.blocks.features) {
+        state.data.blocks.features.forEach(f => {
+            const v = effectiveBlockVal(f.properties.block_id);
+            if (v > 0) { sumCity += v; countCity++; }
+        });
+    }
+    const cityAvg = countCity > 0 ? sumCity / countCity : 0;
+
+    // City median (used for tier labels — more robust than mean for skewed distributions)
+    let allVals = [];
+    if (state.data.blocks && state.data.blocks.features) {
+        state.data.blocks.features.forEach(f => {
+            const v = effectiveBlockVal(f.properties.block_id);
+            if (v > 0) allVals.push(v);
+        });
+    }
+    allVals.sort((a, b) => a - b);
+    const cityMedian = allVals.length > 0 ? allVals[Math.floor(allVals.length / 2)] : 0;
+
+    // --- Loop averages ---
+    let totalVal = 0;
+    let validCount = 0;
+    activeLoops.forEach(f => {
+        const v = effectiveBlockVal(f.properties.closest_block);
+        if (v > 0) { totalVal += v; validCount++; }
+    });
+    const avgRingVal = validCount > 0 ? (totalVal / validCount) : 0;
+
+    let differenceText = '';
+    if (avgRingVal > 0 && cityAvg > 0) {
+        const pct = ((avgRingVal - cityAvg) / cityAvg * 100).toFixed(0);
+        differenceText = pct > 0
+            ? `<span style="color:#22c55e; font-weight:600;">+${pct}% higher</span>`
+            : `<span style="color:#ef4444; font-weight:600;">${Math.abs(pct)}% lower</span>`;
+    }
+
+    // Dynamic summary text
+    const metricName = mode === 'value' ? 'property value' : 'building age';
+    const formattedVal = mode === 'value'
+        ? `$${(avgRingVal / 1000000).toFixed(2)}M`
+        : `${Math.round(avgRingVal)} yrs`;
+
+    // --- Per-loop block profile ---
+    // Shows, for each active loop, the block stats that the SD threshold + grouping produce.
+    // When grouping is on, also shows whether the block sits near a sharp value boundary.
+    const sortedLoops = [...activeLoops].sort((a, b) => b.properties.persistence - a.properties.persistence);
+
+    let profileRows = '';
+    sortedLoops.forEach(l => {
+        const p = l.properties;
+        const bId = p.closest_block;
+        const rawStats = state.blockStatsById ? state.blockStatsById.get(bId) : null;
+        const displayVal = effectiveBlockVal(bId);
+        const color = COLORS['crime-' + p.crime_type] || '#f472b6';
+
+        // Value tier relative to city median
+        let tier = '', tierColor = '#94a3b8';
+        if (cityMedian > 0 && displayVal > 0) {
+            const ratio = displayVal / cityMedian;
+            if (ratio < 0.85) { tier = '▼ Below median'; tierColor = '#ef4444'; }
+            else if (ratio > 1.15) { tier = '▲ Above median'; tierColor = '#22c55e'; }
+            else { tier = '≈ Near median'; tierColor = '#fbbf24'; }
+        }
+
+        // Boundary sharpness: when grouping is active, check if any neighbour block
+        // belongs to a different group → the loop is near a sharp boundary
+        let boundaryHint = '';
+        if (useGrouping && rawStats && rawStats.neighbors && rawStats.neighbors.length > 0) {
+            const myGroup = state.blockGroups.get(bId);
+            const isSharpBoundary = rawStats.neighbors.some(nb => {
+                const nbGroup = state.blockGroups.get(nb);
+                return nbGroup !== undefined && nbGroup !== myGroup;
+            });
+            if (isSharpBoundary) {
+                boundaryHint = `<span style="display:inline-block; margin-top:2px; font-size:0.7rem; color:#f97316; font-weight:600;" title="This block borders a block in a different value group — a sharp property-value boundary.">⚡ Sharp boundary</span>`;
+            } else {
+                boundaryHint = `<span style="display:inline-block; margin-top:2px; font-size:0.7rem; color:#64748b;">Same-group zone</span>`;
+            }
+        }
+
+        const valStr = mode === 'value'
+            ? (displayVal > 0 ? `$${(displayVal / 1000000).toFixed(2)}M` : '–')
+            : (displayVal > 0 ? `${Math.round(displayVal)} yrs` : '–');
+        const ageStr = rawStats && rawStats.avg_age > 0 ? `${Math.round(rawStats.avg_age)} yrs` : '–';
+        const cntStr = rawStats ? rawStats.crime_count : '–';
+        const propStr = rawStats ? rawStats.property_count : '–';
+
+        profileRows += `
+        <div style="background: rgba(255,255,255,0.04); border-left: 3px solid ${color}; border-radius: 6px;
+                     padding: 6px 8px; margin-bottom: 5px; font-size: 0.78rem;">
+            <div style="display:flex; align-items:center; gap:6px; margin-bottom:3px;">
+                <span style="background:${color}22; color:${color}; border-radius:4px;
+                             padding:1px 6px; font-size:0.72rem; font-weight:700;">#${p.rank}</span>
+                <span style="color:#e2e8f0; font-weight:600; flex:1; white-space:nowrap;
+                             overflow:hidden; text-overflow:ellipsis;">${p.crime_type}</span>
+                <span style="color:#64748b; font-size:0.7rem;">p=${p.persistence}</span>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:2px 10px; color:#94a3b8;">
+                <span>${mode === 'value' ? '💰 Eff. value' : '⏳ Eff. age'}: <b style="color:#e2e8f0;">${valStr}</b></span>
+                <span>🏗️ Avg age: <b style="color:#e2e8f0;">${ageStr}</b></span>
+                <span>🚨 Block crimes: <b style="color:#e2e8f0;">${cntStr}</b></span>
+                <span>🏠 Properties: <b style="color:#e2e8f0;">${propStr}</b></span>
+            </div>
+            <div style="margin-top:4px; display:flex; align-items:center; gap:8px;">
+                <span style="font-size:0.72rem; color:${tierColor}; font-weight:600;">${tier}</span>
+                ${boundaryHint}
+            </div>
+        </div>`;
+    });
+
+    // --- Persistence barcode ---
+    let maxDeath = Math.max(...activeLoops.map(l => l.properties.death));
+    if (maxDeath === 0 || !isFinite(maxDeath)) maxDeath = 1;
+
+    let barcodeHtml = `<div style="margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px;">
+        <div style="font-size: 0.78rem; color: #cbd5e1; margin-bottom: 5px; letter-spacing: 0.5px;">
+            Persistence Barcode
+            <span style="color:#475569; font-weight:400; font-size:0.7rem;"> — bar width = how stable the loop is; longer = more significant</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 4px; padding-right: 4px;">`;
+
+    sortedLoops.forEach((l, i) => {
+        const p = l.properties;
+        const leftPct = Math.max(0, (p.birth / maxDeath) * 100);
+        const widthPct = Math.min(100 - leftPct, (p.persistence / maxDeath) * 100);
+        const color = COLORS['crime-' + p.crime_type] || '#f472b6';
+        barcodeHtml += `
+            <div style="display:flex; align-items:center; gap:6px;">
+                <span style="font-size:0.65rem; color:${color}; font-weight:700; min-width:22px; text-align:right;">#${p.rank}</span>
+                <div style="flex:1; height:7px; background:rgba(255,255,255,0.04); position:relative; border-radius:4px;"
+                     title="Loop #${p.rank} · ${p.crime_type} · birth:${p.birth}, death:${p.death}, persistence:${p.persistence}">
+                    <div style="position:absolute; left:${leftPct}%; width:${widthPct}%; height:100%;
+                                background:${color}; border-radius:4px; opacity:0.85;
+                                box-shadow:0 0 4px ${color};"></div>
+                </div>
+            </div>`;
+    });
+    barcodeHtml += `</div></div>`;
+
+    // --- Filter context badge ---
+    const filterBadge = `<div style="font-size:0.7rem; color:#475569; margin-bottom:8px; text-align:right;">
+        SD&nbsp;threshold:&nbsp;<b style="color:#94a3b8;">${state.filters.blockSdThreshold.toFixed(1)}σ</b>
+        &nbsp;·&nbsp;Grouping:&nbsp;<b style="color:#94a3b8;">${useGrouping ? state.filters.blockGroupDiff + '%' : 'off'}</b>
+    </div>`;
+
+    // --- Assemble panel ---
+    pContainer.innerHTML = `
+        <p style="margin: 0 0 6px 0; font-size: 1rem;">
+            <b style="color: #f8fafc;">${activeLoops.length} H1 loops</b> detected.
+        </p>
+        <p style="margin: 0 0 10px 0; font-size: 0.88rem; color: #94a3b8;">
+            Avg ${metricName} inside loops: <b style="color:#f8fafc;">${formattedVal}</b> — ${differenceText} the city average.
+        </p>
+        ${filterBadge}
+        <div style="font-size:0.72rem; color:#64748b; text-transform:uppercase; letter-spacing:0.6px; margin-bottom:5px;">Loop × Block Profile</div>
+        <div style="max-height:280px; overflow-y:auto; padding-right:3px;" class="custom-scrollbar">
+            ${profileRows}
+        </div>
+        ${barcodeHtml}
+    `;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Analysis Modal System + Live Boundary Crime Statistics
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** Opens the analysis modal with the given title and HTML body. */
+function openAnalysisModal(title, bodyHtml) {
+    const modal = document.getElementById('analysis-modal');
+    document.getElementById('analysis-modal-title').textContent = title;
+    document.getElementById('analysis-modal-body').innerHTML = bodyHtml;
+    modal.style.display = 'flex';
+    state._analysisModalOpen = title; // track which modal is open
+}
+
+function closeAnalysisModal() {
+    document.getElementById('analysis-modal').style.display = 'none';
+    state._analysisModalOpen = null;
+}
+
+/**
+ * Computes live boundary crime statistics using the current SD threshold
+ * and grouping settings — mirrors the exact logic used to paint block colors.
+ */
+function computeBoundaryStats() {
+    if (!state.data.blocks || !state.data.crimes) return null;
+
+    const mode = state.filters.blockColorMode;
+    const useGrouping = state.filters.blockGroupDiff > 0;
+
+    // Ensure groups are computed if needed
+    if (useGrouping && state.blockGroups.size === 0) {
+        computeBlockGroups();
+    }
+
+    // Helper: effective value for a block (same as updateTdaPanel)
+    function effVal(bId) {
+        if (useGrouping && state.blockGroups.has(bId)) {
+            return state.blockGroups.get(bId);
+        }
+        if (state.blockPropertyIndex.has(bId)) {
+            const s = getFilteredBlockStats(bId, mode);
+            return s.filteredMean || 0;
+        }
+        // Fallback to raw block stats
+        if (state.blockStatsById && state.blockStatsById.has(bId)) {
+            return mode === 'value'
+                ? state.blockStatsById.get(bId).avg_value
+                : state.blockStatsById.get(bId).avg_age;
+        }
+        return 0;
+    }
+
+    // Compute gradients at every block boundary
+    const blocks = state.data.blocks.features;
+    let totalEdges = 0;
+    let sharpEdgeCount = 0;
+    const gradients = [];
+    const sharpBlocks = new Set();
+
+    blocks.forEach(f => {
+        const bid = f.properties.block_id;
+        const neighbors = f.properties.neighbors || [];
+        const valA = effVal(bid);
+        if (valA <= 0) return;
+
+        neighbors.forEach(nb => {
+            if (nb <= bid) return; // avoid double-counting
+            const valB = effVal(nb);
+            if (valB <= 0) return;
+            const grad = Math.abs(valA - valB) / Math.max(valA, valB);
+            gradients.push(grad);
+            totalEdges++;
+        });
+    });
+
+    if (gradients.length === 0) return null;
+
+    // Instead of forcing exactly 50% of edges to be sharp using a median threshold,
+    // we use the user's explicit block grouping (tuning) to define homogeneous zones.
+    // If adjacent blocks have different effective values (they fall into different visual groups),
+    // then that edge is a "sharp boundary".
+    const isDifferent = (a, b) => Math.abs(a - b) / Math.max(a, b) > 0.0001;
+
+    // We can still calculate medianGrad for informational purposes if needed, but not for logic.
+    const sorted = [...gradients].sort((a, b) => a - b);
+    const medianGrad = sorted.length > 0 ? sorted[Math.floor(sorted.length / 2)] : 0;
+
+    // Re-scan to identify sharp blocks based purely on visual tuning differences 
+    blocks.forEach(f => {
+        const bid = f.properties.block_id;
+        const neighbors = f.properties.neighbors || [];
+        const valA = effVal(bid);
+        if (valA <= 0) return;
+
+        neighbors.forEach(nb => {
+            const valB = effVal(nb);
+            if (!valB || valB <= 0) return;
+
+            // Boundary is defined by the actual groups created by the user tuning sliders
+            if (isDifferent(valA, valB)) {
+                sharpBlocks.add(bid);
+                sharpBlocks.add(nb);
+                if (bid < nb) sharpEdgeCount++;
+            }
+        });
+    });
+
+    // Assign each crime to nearest block → count boundary vs interior
+    // Build block centroid tree (simple lookup)
+    const blockCentroids = new Map();
+    blocks.forEach(f => {
+        const p = f.properties;
+        const geom = f.geometry;
+        // Compute centroid from geometry
+        let cx = 0, cy = 0, n = 0;
+        if (geom.type === 'Polygon' && geom.coordinates[0]) {
+            geom.coordinates[0].forEach(c => { cx += c[0]; cy += c[1]; n++; });
+        } else if (geom.type === 'MultiPolygon' && geom.coordinates[0] && geom.coordinates[0][0]) {
+            geom.coordinates[0][0].forEach(c => { cx += c[0]; cy += c[1]; n++; });
+        }
+        if (n > 0) blockCentroids.set(p.block_id, [cx / n, cy / n]);
+    });
+
+    // For speed, use the existing blockPropertyIndex block_ids
+    const bids = [...blockCentroids.keys()];
+    const bCoords = bids.map(id => blockCentroids.get(id));
+
+    let boundaryCount = 0;
+    let interiorCount = 0;
+
+    // Simple nearest-block for each crime (brute-force but fast enough for ~30k)
+    if (state.data.crimes.features) {
+        state.data.crimes.features.forEach(cf => {
+            const cc = cf.geometry.coordinates;
+            let bestDist = Infinity, bestBid = -1;
+            for (let i = 0; i < bCoords.length; i++) {
+                const dx = cc[0] - bCoords[i][0];
+                const dy = cc[1] - bCoords[i][1];
+                const d = dx * dx + dy * dy;
+                if (d < bestDist) { bestDist = d; bestBid = bids[i]; }
+            }
+            if (sharpBlocks.has(bestBid)) {
+                boundaryCount++;
+            } else {
+                interiorCount++;
+            }
+        });
+    }
+
+    const total = boundaryCount + interiorCount;
+    return {
+        boundaryCount,
+        interiorCount,
+        boundaryPct: total > 0 ? (100 * boundaryCount / total).toFixed(1) : '0',
+        interiorPct: total > 0 ? (100 * interiorCount / total).toFixed(1) : '0',
+        totalCrimes: total,
+        sharpEdgeCount,
+        totalEdges,
+        sharpBlockCount: sharpBlocks.size,
+        totalBlocks: blocks.length,
+        medianGradient: (medianGrad * 100).toFixed(1),
+        sdThreshold: state.filters.blockSdThreshold.toFixed(1),
+        groupDiff: useGrouping ? state.filters.blockGroupDiff + '%' : 'off',
+        mode: mode === 'value' ? 'Property Value' : 'Building Age',
+    };
+}
+
+/** Generates HTML for the live Boundary Stats modal. */
+function renderBoundaryStatsModal() {
+    const s = computeBoundaryStats();
+    if (!s) return '<p style="color:#94a3b8;">Load Blocks and Crime data first.</p>';
+
+    const bPct = parseFloat(s.boundaryPct);
+    const iPct = parseFloat(s.interiorPct);
+
+    return `
+    <div style="text-align:center; margin-bottom:20px;">
+        <div style="font-size:2.2rem; font-weight:700; color:#f8fafc;">${s.boundaryPct}%</div>
+        <div style="font-size:0.95rem; color:#94a3b8;">of all crimes occur near <b style="color:#ef4444;">sharp ${s.mode.toLowerCase()} boundaries</b></div>
+    </div>
+
+    <!-- Bar chart -->
+    <div style="margin:16px 0; display:flex; height:28px; border-radius:8px; overflow:hidden; background:#1e293b;">
+        <div style="width:${bPct}%; background: linear-gradient(90deg, #ef4444, #f97316); display:flex; align-items:center; justify-content:center; font-size:0.72rem; font-weight:700; color:white; min-width:30px;">
+            ${s.boundaryPct}%
+        </div>
+        <div style="width:${iPct}%; background: linear-gradient(90deg, #3b82f6, #6366f1); display:flex; align-items:center; justify-content:center; font-size:0.72rem; font-weight:700; color:white; min-width:30px;">
+            ${s.interiorPct}%
+        </div>
+    </div>
+    <div style="display:flex; justify-content:space-between; font-size:0.78rem; color:#94a3b8; margin-bottom:20px;">
+        <span>🔴 Boundary: <b style="color:#ef4444;">${s.boundaryCount.toLocaleString()}</b> crimes</span>
+        <span>🔵 Interior: <b style="color:#3b82f6;">${s.interiorCount.toLocaleString()}</b> crimes</span>
+    </div>
+
+    <!-- Grid stats -->
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
+        <div style="background:rgba(255,255,255,0.04); padding:12px; border-radius:8px; text-align:center;">
+            <div style="font-size:1.4rem; font-weight:700; color:#fbbf24;">${s.sharpEdgeCount}</div>
+            <div style="font-size:0.72rem; color:#94a3b8;">Sharp edges (of ${s.totalEdges})</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.04); padding:12px; border-radius:8px; text-align:center;">
+            <div style="font-size:1.4rem; font-weight:700; color:#fbbf24;">${s.sharpBlockCount}</div>
+            <div style="font-size:0.72rem; color:#94a3b8;">Blocks at boundaries (of ${s.totalBlocks})</div>
+        </div>
+    </div>
+
+    <!-- Filter context -->
+    <div style="font-size:0.75rem; color:#475569; border-top:1px solid rgba(255,255,255,0.08); padding-top:10px; text-align:center;">
+        Mode: <b style="color:#94a3b8;">${s.mode}</b> · 
+        SD: <b style="color:#94a3b8;">${s.sdThreshold}σ</b> · 
+        Grouping: <b style="color:#94a3b8;">${s.groupDiff}</b> · 
+        Boundary Definition: <b style="color:#94a3b8;">Visual block tuning</b>
+    </div>
+    `;
+}
+
+/** Sets up analysis button click handlers. */
+function setupAnalysisModals() {
+    const modal = document.getElementById('analysis-modal');
+    const closeBtn = document.getElementById('analysis-modal-close');
+
+    // Close button + click outside
+    closeBtn.addEventListener('click', closeAnalysisModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeAnalysisModal();
+    });
+    // Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && modal.style.display !== 'none') closeAnalysisModal();
+    });
+
+    // Button handlers
+    document.querySelectorAll('.analysis-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const modalType = btn.dataset.modal;
+
+            if (modalType === 'boundary-stats') {
+                openAnalysisModal('📊 Boundary Crime Statistics', renderBoundaryStatsModal());
+
+            } else if (modalType === 'ph-comparison') {
+                openAnalysisModal('🔬 Persistence Diagram Comparison',
+                    `<p style="margin-bottom:10px; color:#94a3b8;">
+                        Side-by-side persistence diagrams for crimes near sharp property-value boundaries (red) 
+                        vs crimes in interior/homogeneous zones (blue). Computed with <b>ripser</b>, tested with 
+                        1000-iteration permutation test.
+                    </p>
+                    <img src="./public/data/persistence_comparison.png" 
+                         alt="Persistence Comparison" 
+                         onerror="this.outerHTML='<p style=\\'color:#ef4444;\\'>Image not found. Run: python3 src/boundary_crime_analysis.py</p>'">`
+                );
+
+            } else if (modalType === 'barcode-comparison') {
+                openAnalysisModal('📈 Persistence Barcode Comparison',
+                    `<p style="margin-bottom:10px; color:#94a3b8;">
+                        Barcode view: each horizontal bar represents one topological feature. Width = persistence 
+                        (how stable the feature is). Longer bars = more significant spatial structures.
+                    </p>
+                    <img src="./public/data/barcode_comparison.png" 
+                         alt="Barcode Comparison"
+                         onerror="this.outerHTML='<p style=\\'color:#ef4444;\\'>Image not found. Run: python3 src/boundary_crime_analysis.py</p>'">`
+                );
+            }
+        });
+    });
+}
+
 // Init
-window.addEventListener('DOMContentLoaded', loadDatasets);
+window.addEventListener('DOMContentLoaded', () => {
+    loadDatasets();
+    setupAnalysisModals();
+});

@@ -1,0 +1,397 @@
+/* ── PH Dashboard Styles ─────────────────────────────────────────────── */
+:root {
+  --bg-dark: #0f172a;
+  --bg-glass: rgba(15, 23, 42, 0.82);
+  --border-glass: rgba(255, 255, 255, 0.1);
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --accent: #a78bfa;
+  --accent-glow: rgba(167, 139, 250, 0.5);
+  --ph-pink: #f472b6;
+  --sidebar-width: 340px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body.dark-theme {
+  font-family: 'Outfit', sans-serif;
+  background: var(--bg-dark);
+  color: var(--text-main);
+  overflow: hidden;
+}
+
+/* ── Map ─────────────────────────────────────────────────────────────── */
+#map { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; }
+.leaflet-container { background: transparent; }
+
+/* ── Glass Panel ─────────────────────────────────────────────────────── */
+.glass-panel {
+  background: var(--bg-glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-glass);
+  border-radius: 16px;
+  box-shadow: 0 4px 30px rgba(0,0,0,0.5);
+}
+
+/* ── Loading ─────────────────────────────────────────────────────────── */
+#loading-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; flex-direction: column; justify-content: center; align-items: center;
+  background: var(--bg-dark);
+  transition: opacity 0.5s, visibility 0.5s;
+}
+#loading-overlay.hidden { opacity: 0; visibility: hidden; }
+.spinner {
+  width: 50px; height: 50px;
+  border: 4px solid var(--border-glass);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 20px;
+}
+@keyframes spin { 100% { transform: rotate(360deg); } }
+
+/* ── Sidebar ─────────────────────────────────────────────────────────── */
+.sidebar {
+  position: absolute; top: 20px; left: 20px;
+  width: var(--sidebar-width); height: calc(100vh - 40px);
+  z-index: 1000; display: flex; flex-direction: column; overflow: hidden;
+}
+.sidebar-header {
+  padding: 20px 24px 16px; border-bottom: 1px solid var(--border-glass);
+}
+.sidebar-header h1 {
+  font-size: 1.4rem; font-weight: 600; margin-bottom: 6px;
+  background: linear-gradient(90deg, #c084fc, #f472b6);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.sidebar-header p { color: var(--text-muted); font-size: 0.82rem; line-height: 1.4; }
+.back-link {
+  display: inline-block; margin-bottom: 10px;
+  color: var(--accent); text-decoration: none; font-size: 0.82rem; font-weight: 500;
+  transition: color 0.2s;
+}
+.back-link:hover { color: #f8fafc; }
+.sidebar-content { padding: 20px 24px; overflow-y: auto; flex: 1; }
+.sidebar-content::-webkit-scrollbar { width: 6px; }
+.sidebar-content::-webkit-scrollbar-track { background: transparent; }
+.sidebar-content::-webkit-scrollbar-thumb { background: var(--border-glass); border-radius: 10px; }
+
+/* ── Control Groups ──────────────────────────────────────────────────── */
+.control-group { margin-bottom: 24px; }
+.control-group h3 {
+  font-size: 0.78rem; font-weight: 500; color: #e2e8f0;
+  text-transform: uppercase; letter-spacing: 1px; margin-bottom: 14px;
+}
+
+/* ── Toggle Switch ───────────────────────────────────────────────────── */
+.toggle-switch {
+  display: flex; align-items: center; margin-bottom: 12px;
+  cursor: pointer; font-size: 0.92rem; transition: color 0.2s;
+}
+.toggle-switch:hover { color: #fff; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: relative; display: inline-block; width: 40px; height: 20px;
+  background: rgba(255,255,255,0.1); border-radius: 20px; margin-right: 12px;
+  transition: .4s;
+}
+.slider:before {
+  position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px;
+  background: #94a3b8; border-radius: 50%; transition: .4s;
+}
+.toggle-switch input:checked + .slider { background: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
+.toggle-switch input:checked + .slider:before { transform: translateX(20px); background: #fff; }
+
+/* ── Weight Preset Buttons ───────────────────────────────────────────── */
+.weight-preset-btn {
+  background: rgba(30,41,59,0.8); border: 1px solid #334155;
+  border-radius: 6px; color: #e2e8f0;
+  padding: 8px 6px; font-size: 0.78rem; font-family: inherit;
+  cursor: pointer; text-align: center; transition: border-color 0.2s, background 0.2s;
+  line-height: 1.4;
+}
+.weight-preset-btn:hover:not(.active) {
+  border-color: #475569; background: rgba(51,65,85,0.8);
+}
+.weight-preset-btn.active {
+  border-color: #8b5cf6; background: rgba(139,92,246,0.2); color: #c084fc;
+}
+
+/* ── Range Sliders ───────────────────────────────────────────────────── */
+.range-container { margin-bottom: 10px; }
+.range-container label {
+  display: flex; justify-content: space-between;
+  font-size: 0.8rem; color: var(--text-muted); margin-bottom: 6px;
+}
+.range-container span { color: var(--accent); font-weight: 600; }
+input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; height: 14px; width: 14px; border-radius: 50%;
+  background: var(--accent); cursor: pointer; margin-top: -5px;
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+input[type=range]::-webkit-slider-runnable-track {
+  width: 100%; height: 4px; cursor: pointer;
+  background: rgba(255,255,255,0.1); border-radius: 2px;
+}
+
+/* ── Sharpness Legend ────────────────────────────────────────────────── */
+.sharpness-legend { margin-top: 4px; }
+.legend-bar {
+  height: 10px; border-radius: 5px; width: 100%;
+  background: linear-gradient(90deg, #1e293b, #3b82f6, #a855f7, #f472b6, #ef4444);
+}
+
+/* ── Right-Side Buttons ──────────────────────────────────────────────── */
+.analysis-btn-panel {
+  position: absolute; top: 20px; right: 20px; z-index: 1000;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.analysis-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 10px 8px; min-width: 68px;
+  background: var(--bg-glass); backdrop-filter: blur(16px);
+  border: 1px solid var(--border-glass); border-radius: 12px;
+  color: var(--text-muted); cursor: pointer;
+  transition: all 0.25s; box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+  font-family: 'Outfit', sans-serif; text-decoration: none;
+}
+.analysis-btn:hover {
+  background: rgba(167,139,250,0.15); border-color: rgba(167,139,250,0.4);
+  color: #f8fafc; transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(167,139,250,0.2);
+}
+.analysis-btn-icon { font-size: 1.3rem; line-height: 1; }
+.analysis-btn-label {
+  font-size: 0.62rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.5px; white-space: nowrap;
+}
+
+/* ── Modal ────────────────────────────────────────────────────────────── */
+.analysis-modal {
+  position: fixed; inset: 0; z-index: 2000;
+  background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+  display: flex; justify-content: center; align-items: center;
+  animation: fadeIn 0.2s ease-out;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.analysis-modal-content {
+  position: relative; max-width: 900px; max-height: 88vh; width: 92%;
+  border-radius: 16px; padding: 28px 32px; overflow-y: auto;
+  animation: slideUp 0.25s ease-out;
+}
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.analysis-modal-close {
+  position: absolute; top: 12px; right: 16px;
+  background: none; border: none; color: var(--text-muted);
+  font-size: 1.6rem; cursor: pointer; transition: color 0.2s; line-height: 1;
+}
+.analysis-modal-close:hover { color: #ef4444; }
+.analysis-modal-title {
+  font-size: 1.1rem; font-weight: 700; color: #f8fafc; margin-bottom: 16px;
+  padding-right: 30px;
+  background: linear-gradient(90deg, #c084fc, #f472b6);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.analysis-modal-body {
+  color: #cbd5e1; font-size: 0.9rem; line-height: 1.6;
+}
+.analysis-modal-content::-webkit-scrollbar { width: 5px; }
+.analysis-modal-content::-webkit-scrollbar-track { background: transparent; }
+.analysis-modal-content::-webkit-scrollbar-thumb { background: var(--border-glass); border-radius: 10px; }
+
+/* ── Canvas Charts inside modal ──────────────────────────────────────── */
+.ph-chart-canvas {
+  width: 100%; border-radius: 8px;
+  background: rgba(15,23,42,0.5); border: 1px solid rgba(255,255,255,0.06);
+}
+
+/* ── Stat Grid ───────────────────────────────────────────────────────── */
+.stat-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0;
+}
+.stat-box {
+  background: rgba(255,255,255,0.04); padding: 14px; border-radius: 8px; text-align: center;
+}
+.stat-box .stat-value {
+  font-size: 1.5rem; font-weight: 700; color: #f8fafc;
+}
+.stat-box .stat-label {
+  font-size: 0.72rem; color: #94a3b8; margin-top: 4px;
+}
+
+/* ── Leaflet Layer Control Match Theme ───────────────────────────────── */
+.leaflet-control-layers {
+  background: var(--bg-glass) !important;
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-glass) !important;
+}
+.leaflet-control-layers label {
+  color: var(--text-main);
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.9rem;
+}
+/* ── Custom Tooltip Styles for PH Dashboard ──────────────────────────── */
+
+/* Sharpness edge tooltip styling */
+.sharpness-tooltip .leaflet-tooltip-content {
+    background: rgba(15, 23, 42, 0.95) !important;
+    border: 2px solid #7c3aed !important;
+    border-radius: 8px !important;
+    padding: 12px !important;
+    box-shadow: 0 4px 20px rgba(124, 58, 237, 0.3) !important;
+}
+
+.sharpness-tooltip.leaflet-tooltip-top:before {
+    border-top-color: #7c3aed !important;
+}
+
+/* Block tooltip styling */
+.block-tooltip .leaflet-tooltip-content {
+    background: rgba(15, 23, 42, 0.95) !important;
+    border: 2px solid #475569 !important;
+    border-radius: 8px !important;
+    padding: 12px !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4) !important;
+}
+
+.block-tooltip.leaflet-tooltip-top:before {
+    border-top-color: #475569 !important;
+}
+
+/* General tooltip improvements */
+.leaflet-tooltip {
+    background: rgba(15, 23, 42, 0.95) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 8px !important;
+    color: #f8fafc !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-size: 0.85rem !important;
+    padding: 8px 12px !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4) !important;
+}
+
+.leaflet-tooltip-top:before,
+.leaflet-tooltip-bottom:before,
+.leaflet-tooltip-left:before,
+.leaflet-tooltip-right:before {
+    border-color: rgba(15, 23, 42, 0.95) !important;
+}
+
+/* ── Publication-quality math panel (IEEE-style) ─────────────────────── */
+.math-panel {
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(100, 116, 139, 0.3);
+    border-left: 3px solid #a78bfa;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 14px;
+    font-size: 0.82rem;
+    line-height: 1.6;
+}
+.math-panel .math-title {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #c4b5fd;
+    margin-bottom: 6px;
+    letter-spacing: 0.02em;
+}
+.math-panel .math-body {
+    color: #94a3b8;
+}
+.math-panel .math-body strong { color: #e2e8f0; }
+.math-panel .math-body em { color: #a78bfa; font-style: normal; }
+.math-panel .math-body sub, .math-panel .math-body sup {
+    font-size: 0.75em;
+}
+
+/* ── ph-tooltip (boundary edge hover) ───────────────────────────────────*/
+.ph-tooltip {
+    background: rgba(8, 14, 26, 0.96) !important;
+    border: 1px solid rgba(8, 145, 178, 0.4) !important;
+    border-radius: 8px !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6) !important;
+    padding: 10px 14px !important;
+    color: #f1f5f9 !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-size: 0.82rem !important;
+    max-width: 280px !important;
+}
+.ph-tooltip.leaflet-tooltip-top:before {
+    border-top-color: rgba(8, 145, 178, 0.4) !important;
+}
+
+/* ── Screenshot / print: maximize chart area ─────────────────────────── */
+@media print, (max-width: 0px) {
+    .sidebar, .chart-btn-group, .layer-controls-btn,
+    #loading-overlay, .metric-card-container { display: none !important; }
+    #map { z-index: 0 !important; }
+}
+
+/* ── Chart canvas: consistent sizing across modals ──────────────────── */
+.ph-chart-canvas {
+    width: 100% !important;
+    display: block;
+    border-radius: 6px;
+    border: 1px solid rgba(51, 65, 85, 0.5);
+}
+
+/* ── Modal headers: improved typography ─────────────────────────────── */
+.modal-header-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: #e2e8f0;
+}
+.modal-subtitle {
+    font-size: 0.72rem;
+    color: #64748b;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-top: 2px;
+}
+
+
+/* ── Light Theme Overrides for Academic Publishing ── */
+.analysis-modal-content {
+  background: #ffffff !important;
+  color: #1e293b !important;
+  border: 1px solid #e2e8f0 !important;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.1) !important;
+}
+.analysis-modal-title {
+  color: #1e293b !important;
+  background: none !important;
+  -webkit-text-fill-color: initial !important;
+}
+.analysis-modal-body {
+  color: #475569 !important;
+}
+.math-panel {
+  background: #f8fafc !important;
+  border: 1px solid #e2e8f0 !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important;
+}
+.math-panel .math-title {
+  color: #1e293b !important;
+}
+.math-panel .math-body {
+  color: #475569 !important;
+}
+.math-panel .math-body strong { color: #1e293b !important; }
+.math-panel .math-body em { color: #7c3aed !important; }
+.ph-chart-canvas {
+  background: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+}
+.analysis-modal-close {
+  color: #94a3b8 !important;
+}
+.analysis-modal-close:hover { color: #ef4444 !important; }
+/* Override inline static styles in HTML strings */
+.analysis-modal-content h4 {
+  color: #334155 !important;
+}

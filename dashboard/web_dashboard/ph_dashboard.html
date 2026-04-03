@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Persistent Homology — Sharp Boundary Analysis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="./ph_style.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" async></script>
+</head>
+<body class="dark-theme">
+    <div id="app">
+        <!-- Loading Screen -->
+        <div id="loading-overlay" class="glass-panel active">
+            <div class="spinner"></div>
+            <h2 id="loading-text">Loading PH Data…</h2>
+            <button onclick="document.getElementById('loading-overlay').classList.add('hidden')" style="margin-top:20px;padding:8px 16px;background:#8b5cf6;border:none;border-radius:4px;color:white;cursor:pointer;">Skip / Close</button>
+        </div>
+
+        <!-- Full-screen Map -->
+        <div id="map"></div>
+
+        <!-- Left Sidebar -->
+        <aside id="sidebar" class="sidebar glass-panel">
+            <div class="sidebar-header">
+                <a href="./index.html" class="back-link">← Main Dashboard</a>
+                <h1>Persistent Homology</h1>
+                <p>Sharp boundary analysis: property value & building age contrasts between spatial blocks.</p>
+            </div>
+            <div class="sidebar-content">
+                <!-- Map Layer Toggles -->
+                <div class="control-group">
+                    <h3>Map Layers</h3>
+                    <label class="toggle-switch"><input type="checkbox" id="layer-sharpness" checked>
+                        <span class="slider round"></span> Boundary Sharpness</label>
+
+                    <label class="toggle-switch"><input type="checkbox" id="layer-crime-heat">
+                        <span class="slider round"></span> Crime KDE Heatmap</label>
+                    <label class="toggle-switch"><input type="checkbox" id="layer-blocks">
+                        <span class="slider round"></span> Spatial Blocks</label>
+                    <label class="toggle-switch"><input type="checkbox" id="layer-centroids" checked>
+                        <span class="slider round"></span> Block Centroids</label>
+                    <label class="toggle-switch"><input type="checkbox" id="layer-sharp-streets" checked>
+                        <span class="slider round" style="background-color: #06b6d4;"></span>
+                        <span style="font-weight:500; color:#f8fafc;">Sharp Boundary Streets</span></label>
+                </div>
+
+                <!-- Weight Case Selector -->
+                <div class="control-group">
+                    <h3>Weight Case</h3>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:8px;">
+                        <button class="weight-preset-btn active" data-alpha="0.333" data-beta="0.333" data-gamma="0.334" title="Equal weights: property value, building age, zoning">
+                            Equal<br><small style="font-size:0.65rem; opacity:0.75;">α=β=γ=⅓</small>
+                        </button>
+                        <button class="weight-preset-btn" data-alpha="1.0" data-beta="0.0" data-gamma="0.0" title="Property value only">
+                            Value Only<br><small style="font-size:0.65rem; opacity:0.75;">α=1, β=γ=0</small>
+                        </button>
+                        <button class="weight-preset-btn" data-alpha="0.0" data-beta="1.0" data-gamma="0.0" title="Building age only">
+                            Age Only<br><small style="font-size:0.65rem; opacity:0.75;">β=1, α=γ=0</small>
+                        </button>
+                        <button class="weight-preset-btn" data-alpha="0.0" data-beta="0.0" data-gamma="1.0" title="Zoning only">
+                            Zone Only<br><small style="font-size:0.65rem; opacity:0.75;">γ=1, α=β=0</small>
+                        </button>
+                    </div>
+                    <!-- Hidden inputs read by recomputeTopology() -->
+                    <input type="hidden" id="alpha-slider" value="0.333">
+                    <input type="hidden" id="beta-slider"  value="0.333">
+                    <input type="hidden" id="gamma-slider" value="0.334">
+                    <div style="font-size:0.7rem; color:#8b5cf6; margin-top:2px;">
+                        Select a case, then click Recompute PH below.
+                    </div>
+                </div>
+
+                <!-- Interactive Controls -->
+                <div class="control-group">
+                    <h3>Single Linkage Clustering</h3>
+
+                    <div class="range-container">
+                        <label>ε₁ Spatial Distance: <span id="eps1-thresh-display">200m</span></label>
+                        <input type="range" id="epsilon1-threshold" min="0" max="500" step="10" value="200">
+                        <div style="display:flex; justify-content:space-between; font-size:0.72rem; color:var(--text-muted); margin-top:3px;">
+                            <span>0m (polygon)</span><span>500m</span>
+                        </div>
+                        <div style="font-size:0.72rem; color:#8b5cf6; margin-top:4px;">
+                            Only blocks within ε₁ meters can connect.
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom: 20px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 4px;">
+                            <label for="epsilon2-threshold" style="font-weight: 500; font-size: 0.85rem; color:#e2e8f0; display:flex; align-items:center;">
+                                <span id="eps2-lock-icon" style="margin-right:5px; color:#c084fc;">🔒</span>
+                                ε₂ Boundary Threshold
+                            </label>
+                            <span id="eps2-display" style="font-size: 0.8rem; font-weight: bold; color: #22c55e;">Auto</span>
+                        </div>
+                        <input type="range" id="epsilon2-threshold" min="0" max="1" step="0.0001" value="0">
+                        <div style="display:flex; justify-content:space-between; font-size:0.72rem; color:var(--text-muted); margin-top:3px;">
+                            <span id="eps2-min-label">min_noise</span><span id="eps2-max-label">max</span>
+                        </div>
+                        <div id="eps2-state-warning" style="font-size:0.72rem; color:#c084fc; margin-top:4px;">
+                            Auto-derived from H0 persistence gap.
+                        </div>
+                        <button id="eps2-reset-btn" style="display:none; width:100%; margin-top:6px; padding:4px; font-size:0.7rem; background:rgba(192,132,252,0.15); border:1px solid rgba(192,132,252,0.4); color:#c084fc; border-radius:4px; cursor:pointer;">
+                            Reset to Auto-Gap
+                        </button>
+                    </div>
+
+                    <!-- Live Stats Display -->
+                    <div style="background:rgba(30,41,59,0.8); border:1px solid #334155; border-radius:8px; padding:12px; margin-top:14px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <span style="color:#e2e8f0; font-size:0.8rem;">ε₁ (Spatial):</span>
+                            <span id="eps1-stats-display" style="color:#c084fc; font-weight:bold;">0m</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <span style="color:#e2e8f0; font-size:0.8rem;">ε₂ (Boundary):</span>
+                            <span id="eps2-stats-display" style="color:#22c55e; font-weight:bold;">Auto</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <span style="color:#e2e8f0; font-size:0.8rem;" title="Excluded from gap search">Outliers (Top 2%):</span>
+                            <span id="outlier-count-display" style="color:#f472b6; font-weight:bold;">—</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <span style="color:#e2e8f0; font-size:0.8rem;">Total Street Segments:</span>
+                            <span id="street-total-display" style="color:#60a5fa; font-weight:bold;">—</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="color:#e2e8f0; font-size:0.8rem;" title="Streets collocated with PH boundaries">Sharp Street Segments:</span>
+                            <span id="street-sharp-display" style="color:#ef4444; font-weight:bold;">—</span>
+                        </div>
+                    </div>
+
+                    <!-- Crime Type Filter -->
+                    <div style="background:rgba(30,41,59,0.8); border:1px solid #334155; border-radius:6px; padding:10px; margin-top:12px;">
+                        <h3 style="margin-top:0; margin-bottom:8px; font-size:0.75rem; color:#e2e8f0; text-transform:uppercase; letter-spacing:0.5px;">Crime Type Filter</h3>
+                        <div id="crime-type-radios" style="display:flex; flex-direction:column; gap:4px; max-height:180px; overflow-y:auto; font-size:0.8rem; color:#cbd5e1;">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+
+                    <!-- Recompute Button -->
+                    <button id="recompute-ph-btn" style="width:100%; margin-top:12px; padding:10px; background:linear-gradient(to right, #8b5cf6, #3b82f6); border:none; border-radius:6px; color:white; font-weight:600; cursor:pointer; font-family:inherit; transition:0.2s; position:relative; z-index:1001;">
+                        Recompute PH ⚡
+                    </button>
+                    
+                    <!-- Crime Stats (Boundary vs Interior) -->
+                    <div id="epsilon-crime-stats" style="background:rgba(239,68,68,0.05); border:1px solid rgba(239,68,68,0.2); border-radius:6px; padding:10px; margin-top:14px;">
+                        <h4 style="margin:0 0 6px 0; color:#fca5a5; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;">B&amp;E Crime — Boundary vs Interior</h4>
+                        <div style="font-size:0.8rem; color:#e2e8f0; line-height:1.5;">
+                            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                                <span style="color:#ef4444; font-weight:600;">Boundary Crimes:</span>
+                                <span id="stat-bound-crimes" style="font-weight:bold;">—</span>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; margin-bottom:6px; padding-bottom:6px; border-bottom:1px solid rgba(239,68,68,0.2);">
+                                <span style="color:#94a3b8;">Interior Crimes:</span>
+                                <span id="stat-inter-crimes">—</span>
+                            </div>
+                            <div style="font-size:0.7rem; color:#94a3b8; line-height:1.3;" id="stat-eps-summary">
+                                Analyzing Break &amp; Enter (Residential + Commercial). Click Recompute PH.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+
+                <!-- Live Statistics -->
+                <div class="control-group" style="background:rgba(244,114,182,0.05); border:1px solid rgba(244,114,182,0.2); border-radius:8px; padding:12px;">
+                    <h3 style="color:#f472b6; margin-top:0;">GUDHI PH Summary</h3>
+                    <div id="ph-summary-stats" style="font-size:0.85rem; color:#cbd5e1; line-height:1.6;"></div>
+                </div>
+
+                <!-- Colour Legend -->
+                <div class="control-group">
+                    <h3>Map Colors</h3>
+                    <div style="font-size:0.75rem;">
+                        <div style="font-size:0.65rem; font-weight:600; letter-spacing:0.5px; color:#64748b; margin-bottom:6px;">SHARP STREETS — Crime Count</div>
+                        <div style="height:10px; border-radius:4px; background: linear-gradient(to right, #94a3b8, #4ade80, #facc15, #f97316, #ef4444); margin-bottom:4px;"></div>
+                        <div style="display:flex; justify-content:space-between; font-size:0.62rem; color:var(--text-muted); margin-bottom:10px;">
+                            <span>0</span><span>Low</span><span>Med</span><span>High</span><span>Very High</span>
+                        </div>
+
+                        <div style="font-size:0.65rem; font-weight:600; letter-spacing:0.5px; color:#64748b; margin-bottom:6px;">SHARP BOUNDARIES — Crime Count (PH)</div>
+                        <div style="display:flex; align-items:center; gap:6px; margin-bottom:3px;">
+                            <span style="width:14px; height:2.5px; background:#ef4444; border-radius:2px;"></span>
+                            <span style="color:#94a3b8;">High-crime PH boundary</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:6px; margin-bottom:3px;">
+                            <span style="width:14px; height:2px; background:#4ade80; border-radius:2px;"></span>
+                            <span style="color:#94a3b8;">Low-crime PH boundary</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px; margin-top:6px; padding-top:6px; border-top:1px solid #334155;">
+                            <span style="width:14px; height:1px; background:#94a3b8; border-radius:1px; opacity:0.4;"></span>
+                            <span style="color:#64748b; font-size:0.7rem;">Interior adjacency graph</span>
+                        </div>
+                    </div>
+
+                    <h4 style="margin-top:16px; font-size:0.8rem; color:var(--text-muted);">What are boundary edges?</h4>
+                    <p style="font-size:0.72rem; color:#94a3b8; line-height:1.4;">
+                        Solid colored lines connect pairs of city blocks identified by the PH filtration
+                        (w ≥ ε₂) as forming a sharp socioeconomic discontinuity.
+                        They are colored by crime count for the selected crime type.
+                        The faint gray web shows the full adjacency graph used by the PH algorithm.
+                    </p>
+                </div>
+
+            </div>
+        </aside>
+
+        <!-- Right-Side Analysis Button Panel -->
+        <div id="analysis-btn-panel" class="analysis-btn-panel">
+            <a href="./index.html" class="analysis-btn" title="Main Dashboard">
+                <span class="analysis-btn-icon">🗺️</span>
+                <span class="analysis-btn-label">Main Map</span>
+            </a>
+            <button class="analysis-btn" data-modal="persistence-diagram" title="Persistence Diagrams">
+                <span class="analysis-btn-icon">📊</span>
+                <span class="analysis-btn-label">PH Diagrams</span>
+            </button>
+            <button class="analysis-btn" data-modal="betti-curves" title="Betti Curves">
+                <span class="analysis-btn-icon">📈</span>
+                <span class="analysis-btn-label">Betti Curves</span>
+            </button>
+            <button class="analysis-btn" data-modal="barcode" title="Persistence Barcodes">
+                <span class="analysis-btn-icon">🔬</span>
+                <span class="analysis-btn-label">Barcodes</span>
+            </button>
+            <button class="analysis-btn" data-modal="boundary-stats" title="Boundary Crime Statistics">
+                <span class="analysis-btn-icon">🧮</span>
+                <span class="analysis-btn-label">Crime Stats</span>
+            </button>
+            <button class="analysis-btn" data-modal="spatial-crime-correlation" title="Crime vs Sharpness Box & Scatter Plot" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4);">
+                <span class="analysis-btn-icon">🎯</span>
+                <span class="analysis-btn-label">Crime Correl</span>
+            </button>
+            <button class="analysis-btn" data-modal="edge-crime-correlation" title="Edge Sharpness vs HUNDRED_BLOCK Crimes" style="background: rgba(34, 211, 238, 0.12); border: 1px solid rgba(34, 211, 238, 0.35);">
+                <span class="analysis-btn-icon">📐</span>
+                <span class="analysis-btn-label">Edge Crimes</span>
+            </button>
+            <button class="analysis-btn" data-modal="weights-optimization" title="Simplex Optimization Grid" style="background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.4);">
+                <span class="analysis-btn-icon">⚖️</span>
+                <span class="analysis-btn-label">Simplex Grid</span>
+            </button>
+            <button class="analysis-btn" onclick="exportAllCharts()" title="Download all charts as high-res PNGs" style="background: rgba(34, 197, 94, 0.15); border: 1px solid rgba(34, 197, 94, 0.4);">
+                <span class="analysis-btn-icon">📥</span>
+                <span class="analysis-btn-label">Save All</span>
+            </button>
+
+        </div>
+
+        <!-- Modal Overlay -->
+        <div id="analysis-modal" class="analysis-modal" style="display:none;">
+            <div class="analysis-modal-content glass-panel">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                    <h3 id="analysis-modal-title" class="analysis-modal-title" style="margin:0;"></h3>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <button id="analysis-modal-save" title="Save current chart(s) as PNG" style="background:rgba(34,197,94,0.15); border:1px solid rgba(34,197,94,0.4); color:#4ade80; padding:5px 12px; border-radius:4px; cursor:pointer; font-family:inherit; font-size:0.75rem; font-weight:600;">
+                            📥 Save PNG
+                        </button>
+                        <button id="analysis-modal-close" class="analysis-modal-close">&times;</button>
+                    </div>
+                </div>
+                <div id="analysis-modal-body" class="analysis-modal-body"></div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="./ph_dashboard.js"></script>
+</body>
+</html>
