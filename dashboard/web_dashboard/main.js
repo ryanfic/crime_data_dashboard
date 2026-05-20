@@ -1416,14 +1416,17 @@ function setupEventListeners() {
 
             const blockGradLegend = document.getElementById('block-gradient-legend');
             const blockCrimeLegend = document.getElementById('block-crime-legend');
+            const blockGroupingContainer = document.getElementById('block-grouping-container');
 
             if (state.filters.blockColorMode === 'crime') {
                 // Show discrete crime legend, hide continuous gradient
                 if (blockGradLegend) blockGradLegend.classList.add('hidden');
                 if (blockCrimeLegend) blockCrimeLegend.classList.remove('hidden');
+                if (blockGroupingContainer) blockGroupingContainer.style.display = 'none';
             } else {
                 if (blockCrimeLegend) blockCrimeLegend.classList.add('hidden');
                 if (blockGradLegend) blockGradLegend.classList.remove('hidden');
+                if (blockGroupingContainer) blockGroupingContainer.style.display = '';
                 if (state.filters.blockColorMode === 'value') {
                     blockGradBar.style.background = 'linear-gradient(to right, rgb(94,79,162), rgb(50,136,189), rgb(102,194,165), rgb(171,221,164), rgb(230,245,152), rgb(254,224,139), rgb(253,174,97), rgb(244,109,67), rgb(213,62,79), rgb(158,1,66))';
                 } else if (state.filters.blockColorMode === 'age') {
@@ -1951,6 +1954,32 @@ function renderBoundaryStatsModal() {
     `;
 }
 
+/** Dynamically generates the right-side analysis button panel. */
+function generateAnalysisButtons() {
+    const panel = document.getElementById('analysis-btn-panel');
+    if (!panel) return;
+
+    panel.innerHTML = `
+        <button class="analysis-btn" data-modal="boundary-stats" title="Boundary Crime Statistics">
+            <span class="analysis-btn-icon">📊</span>
+            <span class="analysis-btn-label">Boundary</span>
+        </button>
+        <button class="analysis-btn" data-modal="ph-comparison" title="Persistence Diagram Comparison">
+            <span class="analysis-btn-icon">🔬</span>
+            <span class="analysis-btn-label">PH Diagrams</span>
+        </button>
+        <button class="analysis-btn" data-modal="barcode-comparison" title="Persistence Barcode Comparison">
+            <span class="analysis-btn-icon">📈</span>
+            <span class="analysis-btn-label">Barcodes</span>
+        </button>
+        <a href="./ph_dashboard.html" class="analysis-btn" title="Persistent Homology Dashboard"
+            style="text-decoration:none;">
+            <span class="analysis-btn-icon">🧬</span>
+            <span class="analysis-btn-label">PH Dashboard</span>
+        </a>
+    `;
+}
+
 /** Sets up analysis button click handlers. */
 function setupAnalysisModals() {
     const modal = document.getElementById('analysis-modal');
@@ -2004,5 +2033,6 @@ function setupAnalysisModals() {
 // Init
 window.addEventListener('DOMContentLoaded', () => {
     loadDatasets();
+    generateAnalysisButtons();
     setupAnalysisModals();
 });
